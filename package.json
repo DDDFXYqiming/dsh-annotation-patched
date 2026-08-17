@@ -18,7 +18,8 @@
   ],
   "scripts": {
     "check": "node --check index.mjs && node --check client.js",
-    "prepublishOnly": "npm run check"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm run check && npm test"
   },
   "publishConfig": {
     "access": "public"
@@ -34,7 +35,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DDDFXYqiming/dsh-annotation-patched.git"  },
+    "url": "git+https://github.com/DDDFXYqiming/dsh-annotation-patched.git"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -51,17 +53,11 @@
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6"
   },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-client-runtime": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-ui-conversation": {
-      "optional": true
-    }
-  },
   "license": "MIT",
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }
-
