@@ -782,6 +782,9 @@ window.__ModuleLoader__.load({
       }
       window.addEventListener('scroll', onLayoutChange, true)
       window.addEventListener('resize', onLayoutChange)
+      // composer 可能是 fixed/sticky 层，滚动或窗口尺寸变化时其 viewport 坐标也可能变。
+      window.addEventListener('scroll', scheduleChipUpdate, true)
+      window.addEventListener('resize', scheduleChipUpdate)
 
       function mutationRelevant(mutations) {
         for (var i = 0; i < mutations.length; i++) {
@@ -797,6 +800,12 @@ window.__ModuleLoader__.load({
         return false
       }
       var observer = new MutationObserver(function (mutations) {
+        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需在 DOM 变化
+        // 后重新取锚。仅在节点身份变化时调度，避免 chipLayer 自己的 DOM 更新形成循环。
+        if (ui.quotes.length > 0
+          && document.querySelector('[data-composer-card]') !== chipComposerCard) {
+          scheduleChipUpdate()
+        }
         if (!mutationRelevant(mutations)) return
         onLayoutChange()
         // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：
@@ -1302,7 +1311,54 @@ window.__ModuleLoader__.load({
       tipLayer.setAttribute('data-annotation-tip-layer', '')
       document.body.appendChild(tipLayer)
 
+      // PATCH(2026-08-17): chipLayer 是 fixed 层，不能只在「引用数量变化」时定位一次。
+      // DSH composer 的 textarea 多行增长时，composer card 会从底部向上变高；若不重新
+      // 计算 card.top，标签就留在旧坐标，随后被输入框外壳「吞」进去并遮挡第一行内容。
+      // ResizeObserver 负责捕获自动增高，input/DOM 监听负责覆盖无 ResizeObserver 或
+      // composer 被 React 替换的情况；所有更新都合并到下一帧，避免输入时反复重排。
+      var chipComposerCard = null
+      var chipResizeObserver = null
+      var chipPositionFrame = null
+
+      function scheduleChipUpdate() {
+        if (chipPositionFrame !== null) return
+        chipPositionFrame = requestAnimationFrame(function () {
+          chipPositionFrame = null
+          updateChip()
+        })
+      }
+
+      function observeChipComposer(card) {
+        if (card === chipComposerCard) return
+        if (chipResizeObserver !== null) {
+          chipResizeObserver.disconnect()
+          chipResizeObserver = null
+        }
+        chipComposerCard = card
+        if (card !== null && typeof ResizeObserver === 'function') {
+          chipResizeObserver = new ResizeObserver(function () {
+            scheduleChipUpdate()
+          })
+          chipResizeObserver.observe(card)
+          // 某些布局只改变输入滚动区/textarea 的尺寸，外层 card 的 ResizeObserver
+          // 可能收不到变化；一并观察这两个节点，兼容不同 DSH snapshot。
+          var inputScroll = card.querySelector('[data-input-scroll]')
+          if (inputScroll !== null) chipResizeObserver.observe(inputScroll)
+          var textarea = card.querySelector('textarea')
+          if (textarea !== null) chipResizeObserver.observe(textarea)
+        }
+      }
+
+      function onComposerInput(e) {
+        var target = e.target
+        if (!(target instanceof Element) || target.closest('[data-composer-card]') === null) return
+        scheduleChipUpdate()
+      }
+      document.addEventListener('input', onComposerInput, true)
+
       function updateChip() {
+        var card = document.querySelector('[data-composer-card]')
+        observeChipComposer(ui.quotes.length > 0 ? card : null)
         if (ui.quotes.length === 0) {
           chipLayer.style.display = 'none'
           tipLayer.textContent = ''
@@ -1314,12 +1370,12 @@ window.__ModuleLoader__.load({
         b.textContent = String(ui.quotes.length)
         chipLayer.appendChild(b)
         chipLayer.appendChild(document.createTextNode('条引用'))
-        var card = document.querySelector('[data-composer-card]')
         if (card === null) { chipLayer.style.display = 'none'; return }
         var r = card.getBoundingClientRect()
         var w = chipLayer.offsetWidth || 80
+        var h = chipLayer.offsetHeight || 22
         chipLayer.style.left = Math.max(8, r.right - w - 12) + 'px'
-        chipLayer.style.top = Math.max(8, r.top - 30) + 'px'
+        chipLayer.style.top = Math.max(8, r.top - h - 8) + 'px'
         chipLayer.style.display = 'flex'
       }
 
@@ -1794,6 +1850,18 @@ window.__ModuleLoader__.load({
         if (imeClearTimer !== null) { clearTimeout(imeClearTimer); imeClearTimer = null }
         window.removeEventListener('scroll', onLayoutChange, true)
         window.removeEventListener('resize', onLayoutChange)
+        window.removeEventListener('scroll', scheduleChipUpdate, true)
+        window.removeEventListener('resize', scheduleChipUpdate)
+        document.removeEventListener('input', onComposerInput, true)
+        if (chipPositionFrame !== null) {
+          cancelAnimationFrame(chipPositionFrame)
+          chipPositionFrame = null
+        }
+        if (chipResizeObserver !== null) {
+          chipResizeObserver.disconnect()
+          chipResizeObserver = null
+        }
+        chipComposerCard = null
         host.removeEventListener('pointerdown', onHostPointerDown)
         observer.disconnect()
         if (typeof unsub === 'function') unsub()
