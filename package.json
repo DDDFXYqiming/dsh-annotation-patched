@@ -34,9 +34,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DDDFXYqiming/dsh-annotation-patched.git",
-
-  },
+    "url": "git+https://github.com/DDDFXYqiming/dsh-annotation-patched.git"  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -66,3 +64,4 @@
     "node": ">=20"
   }
 }
+
