@@ -1,0 +1,174 @@
+{
+  "name": "dsh-annotation-patched replay manifest",
+  "targetFile": "client.js",
+  "base": {
+    "repo": "omdsh-dev/dsh-annotation",
+    "baseVersion": "1.4.1 + issue#20 fix",
+    "baseCommit": "fd24ef92",
+    "note": "干净基座：gh api repos/omdsh-dev/dsh-annotation/contents/client.js?ref=<commit>（--fetch 自动化）；历史基座 v1.3.13=a37edb01"
+  },
+  "terminology": [
+    {
+      "from": "批注",
+      "to": "引用",
+      "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
+    }
+  ],
+  "opsCount": 21,
+  "verifiedAgainst": "待回填：升级产物通过 node --check + jsdom 加载测试",
+  "ops": [
+    {
+      "id": "op00-pkg-id",
+      "group": "pkg-id",
+      "description": "fork 包名：@omdsh-dev/dsh-annotation → @dsh-external/dsh-annotation-patched（bundle 头部 id）",
+      "find": "window.__ModuleLoader__.load({\n  // 必须与 package.json \"name\" 完全一致，否则 client-modules 报：\n  // bundle loaded without registering \"@omdsh-dev/dsh-annotation\"\n  id: '@omdsh-dev/dsh-annotation',\n  factory: (require) => {\n    'use strict'\n",
+      "replace": "window.__ModuleLoader__.load({\n  // 必须与 package.json \"name\" 完全一致，否则 client-modules 报：\n  // bundle loaded without registering \"@dsh-external/dsh-annotation-patched\"\n  id: '@dsh-external/dsh-annotation-patched',\n  factory: (require) => {\n    'use strict'\n"
+    },
+    {
+      "id": "op01-p0814e-marker-zindex",
+      "group": "p0814e-marker-zindex",
+      "description": "PATCH(2026-08-14e)：高亮/编号层 z-index 恢复 900/940，配合区域过滤方案（注释说明根因）",
+      "find": "        '.dsh-ann-error { color: var(--dsw-alias-state-error-primary, #ff7a7a);',\n        '  font-size: 12px; margin-top: 8px; word-break: break-word; }',\n        '.dsh-ann-hl { position: fixed; z-index: 900; background: rgba(255, 195, 0, .15);',\n        '  border-radius: 2px; pointer-events: none; animation: dsh-ann-fadein .15s ease; }',\n",
+      "replace": "        '.dsh-ann-error { color: var(--dsw-alias-state-error-primary, #ff7a7a);',\n        '  font-size: 12px; margin-top: 8px; word-break: break-word; }',\n        // PATCH(2026-08-14e): 高亮/编号盖输入栏的根因是 buildMarkers 把滚动后\n        // 进入 composer 区域的 rect 也渲染成了 fixed 层——正解是「区域过滤」\n        // （buildMarkers 跳过与输入栏重叠的 rect），而非压 z-index（压太低会被\n        // 对话区元素盖住，chip 点不开、取消/删除失效）。z-index 恢复 900/940。\n        '.dsh-ann-hl { position: fixed; z-index: 900; background: rgba(255, 195, 0, .15);',\n        '  border-radius: 2px; pointer-events: none; animation: dsh-ann-fadein .15s ease; }',\n"
+    },
+    {
+      "id": "op02-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：chipLayer 动态重定位——scroll/resize 监听 + React 替换 composer 后重取锚",
+      "find": "      window.addEventListener('scroll', onLayoutChange, true)\n      window.addEventListener('resize', onLayoutChange)\n\n      function mutationRelevant(mutations) {\n",
+      "replace": "      window.addEventListener('scroll', onLayoutChange, true)\n      window.addEventListener('resize', onLayoutChange)\n      // composer 可能是 fixed/sticky 层，滚动或窗口尺寸变化时其 viewport 坐标也可能变。\n      window.addEventListener('scroll', scheduleChipUpdate, true)\n      window.addEventListener('resize', scheduleChipUpdate)\n\n      function mutationRelevant(mutations) {\n"
+    },
+    {
+      "id": "op03-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：chipLayer 动态重定位——scroll/resize 监听 + React 替换 composer 后重取锚（续 2/2）",
+      "find": "      }\n      var observer = new MutationObserver(function (mutations) {\n        if (!mutationRelevant(mutations)) return\n        onLayoutChange()\n",
+      "replace": "      }\n      var observer = new MutationObserver(function (mutations) {\n        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需在 DOM 变化\n        // 后重新取锚。仅在节点身份变化时调度，避免 chipLayer 自己的 DOM 更新形成循环。\n        if (ui.quotes.length > 0\n          && document.querySelector('[data-composer-card]') !== chipComposerCard) {\n          scheduleChipUpdate()\n        }\n        if (!mutationRelevant(mutations)) return\n        onLayoutChange()\n"
+    },
+    {
+      "id": "op04-p0814d-send-button",
+      "group": "p0814d-send-button",
+      "description": "PATCH(2026-08-14d)：点击发送按钮同样拼稿（capture 拦截主发送按钮），修复点按钮发送丢引用；v1.4.1 适配：attachAndSend 改传合成事件对象",
+      "find": "      // 提交）——否则等我们执行时消息已提交，拼稿永远太迟。\n      document.addEventListener('keydown', onKeyDown, true)\n\n      // ---------- 渲染 ----------\n",
+      "replace": "      // 提交）——否则等我们执行时消息已提交，拼稿永远太迟。\n      document.addEventListener('keydown', onKeyDown, true)\n\n      // PATCH(2026-08-14d): 点击发送按钮同样要拼稿——DSH composer 的发送按钮\n      // 走 onClick: onPrimary 直接提交草稿，不产生 keydown Enter；若用户点按钮\n      // 发送（而非回车），引用块不会拼进草稿，消息发出后 watchInputDraft 又按\n      // 「草稿从有→空」清空 quotes，引用被静默丢弃（「添加了引用但没带上」）。\n      // 在 capture 阶段拦截点击：目标是 composer 卡内的主发送按钮（primary\n      // 类 + aria-label 含「发送/Send」且非「停止/Stop」）时，先拼稿再放行。\n      function onDocClickCapture(e) {\n        if (ui.quotes.length === 0) return\n        var target = e.target\n        if (!(target instanceof Element)) return\n        var btn = target.closest('button')\n        if (btn === null) return\n        var card = btn.closest('[data-composer-card]')\n        if (card === null) return\n        // 发送按钮特征：primary 类 + aria-label 是发送语义（本地化：发送/Send/Submit）。\n        // 停止按钮（stop）也同卡同域，但 aria-label 是「停止/Stop」——显式排除。\n        var label = (btn.getAttribute('aria-label') || '').trim()\n        if (label === '') return\n        var isStop = /停止|stop/i.test(label)\n        var isSend = /发送|send|submit/i.test(label)\n        if (!isSend || isStop) return\n        if (btn.disabled) return\n        // v1.4.x 适配：attachAndSend(e) 需要 event 判定修饰键；\n        // 点击路径等价裸 Enter（无修饰键），传合成事件对象。\n        attachAndSend({ ctrlKey: false, metaKey: false })\n      }\n      document.addEventListener('click', onDocClickCapture, true)\n\n      // ---------- 渲染 ----------\n"
+    },
+    {
+      "id": "op05-p0814c-single-button",
+      "group": "p0814c-single-button",
+      "description": "PATCH(2026-08-14c)：单按钮制——图标恒无；v1.4.1 适配：文案走 t() i18n",
+      "find": "          bar.appendChild(ghostButton(\n            already ? null : ICONS.plus,\n            already ? t('actions.already') : t('actions.annotate'),\n            already ? t('actions.alreadyTitle') : t('actions.annotateTitle'),\n            already,\n            enterEditing,\n          ))\n",
+      "replace": "          // PATCH(2026-08-14c): 单按钮制——图标恒无（v1.4.x i18n 适配：文案走\n          // t()，「可留空 = 仅引用原文」提示见 annotateTitle 字典补充）。\n          bar.appendChild(ghostButton(\n            null,\n            already ? t('actions.already') : t('actions.annotate'),\n            already ? t('actions.alreadyTitle') : t('actions.annotateTitle'),\n            already,\n            enterEditing,\n          ))\n",
+      "adaptedFor": "fd24ef92：上游 1.4.0 引入 locale i18n，原硬编码文案锚点失效"
+    },
+    {
+      "id": "op06-p0814c-single-button",
+      "group": "p0814c-single-button",
+      "description": "PATCH(2026-08-14c)：zh 字典补「可留空 = 仅引用原文」提示（单按钮语义）",
+      "find": "          annotateTitle: '为选中的内容写一条引用',\n",
+      "replace": "          annotateTitle: '为选中的内容写一条引用（可留空 = 仅引用原文）',\n"
+    },
+    {
+      "id": "op07-p0814c-single-button",
+      "group": "p0814c-single-button",
+      "description": "PATCH(2026-08-14c)：en 字典补 leave-empty 提示（单按钮语义）",
+      "find": "          annotateTitle: 'Write a note about the selected text',\n",
+      "replace": "          annotateTitle: 'Write a note about the selected text (leave empty to quote without a note)',\n"
+    },
+    {
+      "id": "op08-p0814e-delete-in-edit",
+      "group": "p0814e-delete-in-edit",
+      "description": "PATCH(2026-08-14e)：编辑态提供「删除引用」按钮",
+      "find": "          row.appendChild(cancel)\n          row.appendChild(save)\n          card.appendChild(row)\n          if (ui.error !== null) {\n",
+      "replace": "          row.appendChild(cancel)\n          row.appendChild(save)\n          // PATCH(2026-08-14e): 编辑已有引用时提供「删除引用」（v2 加回）——删除入口\n          // 平时在「输入框旁标签 → 悬浮面板」里，编辑态直接删更顺手。\n          if (ui.editingId !== null) {\n            var del = document.createElement('button')\n            del.type = 'button'\n            del.className = 'dsh-ann-cancel'\n            del.style.cssText = 'color:#ff8a8a;border-color:rgba(255,107,107,.4);'\n            del.textContent = '删除引用'\n            del.addEventListener('click', function () {\n              removeQuote(ui.editingId)\n              closeToolbar()\n            })\n            row.appendChild(del)\n          }\n          card.appendChild(row)\n          if (ui.error !== null) {\n"
+    },
+    {
+      "id": "op09-p0814e-region-filter",
+      "group": "p0814e-region-filter",
+      "description": "PATCH(2026-08-14e)：buildMarkers 区域过滤——高亮/编号不落入 composer 区域；滚出可视区不显示编号",
+      "find": "      function buildMarkers() {\n        if (ui.quotes.length === 0) return\n        var placed = []\n        for (var i = 0; i < ui.quotes.length; i++) {\n",
+      "replace": "      function buildMarkers() {\n        if (ui.quotes.length === 0) return\n        // PATCH(2026-08-14e): 区域过滤——高亮/编号只渲染在对话可视区（composer 卡片\n        // 顶部之上）。滚动后引用文本滚进输入栏区域时其 rect.top ≥ composerTop，\n        // 跳过即可，fixed 层永远不落到输入栏上（z-index 高位也不会盖输入栏）。\n        var composerTop = window.innerHeight\n        var composerCard = document.querySelector('[data-composer-card]')\n        if (composerCard !== null) {\n          var cr = composerCard.getBoundingClientRect()\n          if (cr.top > 0) composerTop = cr.top\n        }\n        var placed = []\n        for (var i = 0; i < ui.quotes.length; i++) {\n"
+    },
+    {
+      "id": "op10-p0814e-region-filter",
+      "group": "p0814e-region-filter",
+      "description": "PATCH(2026-08-14e)：buildMarkers 区域过滤——高亮/编号不落入 composer 区域；滚出可视区不显示编号（续 2/3）",
+      "find": "            var rect = rects[c]\n            if (rect.width === 0 || rect.height === 0) continue\n            var hl = document.createElement('div')\n            hl.className = 'dsh-ann-hl'\n",
+      "replace": "            var rect = rects[c]\n            if (rect.width === 0 || rect.height === 0) continue\n            if (rect.top >= composerTop) continue\n            var hl = document.createElement('div')\n            hl.className = 'dsh-ann-hl'\n"
+    },
+    {
+      "id": "op11-p0814e-region-filter",
+      "group": "p0814e-region-filter",
+      "description": "PATCH(2026-08-14e)：buildMarkers 区域过滤——高亮/编号不落入 composer 区域；滚出可视区不显示编号（续 3/3）",
+      "find": "            var r = rects[k]\n            if (r.width === 0 || r.height === 0) continue\n            if (r.top > -8 && r.top < window.innerHeight) { anchor = r; break }\n          }\n          if (anchor === null && rects.length > 0 && rects[0].width > 0) anchor = rects[0]\n          if (anchor !== null) {\n            var chip = document.createElement('div')\n",
+      "replace": "            var r = rects[k]\n            if (r.width === 0 || r.height === 0) continue\n            if (r.top > -8 && r.top < composerTop) { anchor = r; break }\n          }\n          // 引用文本整体滚出对话可视区（anchor 为 null）时不显示编号——\n          // 不 fallback 到 rects[0]，否则编号会落到输入栏区域。\n          if (anchor === null) continue\n          if (anchor !== null) {\n            var chip = document.createElement('div')\n"
+    },
+    {
+      "id": "op12-p0814c-strip-confirm",
+      "group": "p0814c-strip-confirm",
+      "description": "PATCH(2026-08-14c)：插入 stripOldBlock（双语哨兵版）；v1.4.1 适配：复用上游 hasAnnotationBlock",
+      "find": "      /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。\n       *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */\n      function attachAndSend(e) {\n",
+      "replace": "      /** 从草稿中剥离残留的旧引用块（\"我引用了以下…提问：\" / \"I annotated the\n       *  following…Ask:\" 整块），保留用户自己的输入。残留来源：上次 setDraft 后\n       *  提交失败/未触发，旧块留在草稿里而引用集已变——若不剥离，旧块会随下一条\n       *  消息重复发出且内容过期。PATCH(2026-08-14c): 竞态修复——剥离替代跳过；\n       *  全局替换一次剥净多个残留；双语哨兵适配 v1.4 i18n。非贪婪匹配到第一个\n       *  块尾标记：块拼在草稿最前，用户输入在其后，第一个标记必属块尾。 */\n      function stripOldBlock(draft) {\n        if (!hasAnnotationBlock(draft)) return draft\n        return draft.replace(\n          /\\n*(?:我引用了以下|I annotated the following)[\\s\\S]*?\\n\\n(?:提问：|Ask:)(?:\\n+)?/g,\n          '',\n        )\n      }\n\n      /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。\n       *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */\n      function attachAndSend(e) {\n",
+      "adaptedFor": "fd24ef92：JSDoc 与签名变化，正则升级双语哨兵"
+    },
+    {
+      "id": "op13-p0814c-strip-confirm",
+      "group": "p0814c-strip-confirm",
+      "description": "PATCH(2026-08-14c)：有块即跳过 → 剥离重拼；v1.4.1 适配：锚点随上游 #20/i18n 更新",
+      "find": "          // 草稿已含引用块（上次追加未发送）→ 不重复追加（zh/en 双哨兵）。\n          if (hasAnnotationBlock(draft)) return true\n          var block = buildBlock()\n          shell.setDraft(block + '\\n' + draft)\n",
+      "replace": "          // PATCH(2026-08-14c): 残留块不跳过、剥离后重拼——上次追加未发送时草稿\n          // 里的旧块可能已过期（引用集已变），stripOldBlock 剥旧块再拼新块，\n          // 用户已输入文字保留在块后；发送确认制清理（watchInputDraft）不受影响。\n          var clean = stripOldBlock(draft)\n          var block = buildBlock()\n          shell.setDraft(block + (clean === '' ? '' : '\\n' + clean))\n",
+      "adaptedFor": "fd24ef92"
+    },
+    {
+      "id": "op14-p0814e-collapse-selection",
+      "group": "p0814e-collapse-selection",
+      "description": "PATCH(2026-08-14e)：关闭工具条时塌缩残留选区，修复取消/X 不生效",
+      "find": "        if (ui.mode === 'closed') return\n        clearSettle()\n        ui.mode = 'closed'\n        ui.error = null\n",
+      "replace": "        if (ui.mode === 'closed') return\n        clearSettle()\n        // PATCH(2026-08-14e): 塌缩残留选区——编辑已有引用时（chip 打开的编辑卡），\n        // 原文本选区在保存后仍存在；若不塌缩，selectionchange 的 settle 会在关闭\n        // 后 ~250ms 重新弹出工具条，表现为「取消/右上角 X 不生效」（新建引用时点\n        // 「引用」按钮已塌缩选区，故无此问题）。\n        try {\n          var sel = window.getSelection()\n          if (sel !== null && !sel.isCollapsed) sel.removeAllRanges()\n        } catch (_) { /* 选区操作失败忽略 */ }\n        ui.mode = 'closed'\n        ui.error = null\n"
+    },
+    {
+      "id": "op15-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：updateChip 改造——ResizeObserver/rAF 合帧/动态测高定位",
+      "find": "      document.body.appendChild(tipLayer)\n\n      function updateChip() {\n        if (ui.quotes.length === 0) {\n          chipLayer.style.display = 'none'\n",
+      "replace": "      document.body.appendChild(tipLayer)\n\n      // PATCH(2026-08-17): chipLayer 是 fixed 层，不能只在「引用数量变化」时定位一次。\n      // DSH composer 的 textarea 多行增长时，composer card 会从底部向上变高；若不重新\n      // 计算 card.top，标签就留在旧坐标，随后被输入框外壳「吞」进去并遮挡第一行内容。\n      // ResizeObserver 负责捕获自动增高，input/DOM 监听负责覆盖无 ResizeObserver 或\n      // composer 被 React 替换的情况；所有更新都合并到下一帧，避免输入时反复重排。\n      var chipComposerCard = null\n      var chipResizeObserver = null\n      var chipPositionFrame = null\n\n      function scheduleChipUpdate() {\n        if (chipPositionFrame !== null) return\n        chipPositionFrame = requestAnimationFrame(function () {\n          chipPositionFrame = null\n          updateChip()\n        })\n      }\n\n      function observeChipComposer(card) {\n        if (card === chipComposerCard) return\n        if (chipResizeObserver !== null) {\n          chipResizeObserver.disconnect()\n          chipResizeObserver = null\n        }\n        chipComposerCard = card\n        if (card !== null && typeof ResizeObserver === 'function') {\n          chipResizeObserver = new ResizeObserver(function () {\n            scheduleChipUpdate()\n          })\n          chipResizeObserver.observe(card)\n          // 某些布局只改变输入滚动区/textarea 的尺寸，外层 card 的 ResizeObserver\n          // 可能收不到变化；一并观察这两个节点，兼容不同 DSH snapshot。\n          var inputScroll = card.querySelector('[data-input-scroll]')\n          if (inputScroll !== null) chipResizeObserver.observe(inputScroll)\n          var textarea = card.querySelector('textarea')\n          if (textarea !== null) chipResizeObserver.observe(textarea)\n        }\n      }\n\n      function onComposerInput(e) {\n        var target = e.target\n        if (!(target instanceof Element) || target.closest('[data-composer-card]') === null) return\n        scheduleChipUpdate()\n      }\n      document.addEventListener('input', onComposerInput, true)\n\n      function updateChip() {\n        var card = document.querySelector('[data-composer-card]')\n        observeChipComposer(ui.quotes.length > 0 ? card : null)\n        if (ui.quotes.length === 0) {\n          chipLayer.style.display = 'none'\n"
+    },
+    {
+      "id": "op16-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：updateChip 改造——ResizeObserver/rAF 合帧/动态测高定位（续 2/3）；v1.4.1 适配：按 t(chip.count) 新上下文锚定",
+      "find": "        chipLayer.appendChild(document.createTextNode(t('chip.count')))\n        var card = document.querySelector('[data-composer-card]')\n        if (card === null) { chipLayer.style.display = 'none'; return }\n",
+      "replace": "        chipLayer.appendChild(document.createTextNode(t('chip.count')))\n        if (card === null) { chipLayer.style.display = 'none'; return }\n",
+      "adaptedFor": "fd24ef92：updateChip 内 i18n 行变更"
+    },
+    {
+      "id": "op17-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：updateChip 改造——ResizeObserver/rAF 合帧/动态测高定位（续 3/3）",
+      "find": "        var r = card.getBoundingClientRect()\n        var w = chipLayer.offsetWidth || 80\n        chipLayer.style.left = Math.max(8, r.right - w - 12) + 'px'\n        chipLayer.style.top = Math.max(8, r.top - 30) + 'px'\n        chipLayer.style.display = 'flex'\n      }\n",
+      "replace": "        var r = card.getBoundingClientRect()\n        var w = chipLayer.offsetWidth || 80\n        var h = chipLayer.offsetHeight || 22\n        chipLayer.style.left = Math.max(8, r.right - w - 12) + 'px'\n        chipLayer.style.top = Math.max(8, r.top - h - 8) + 'px'\n        chipLayer.style.display = 'flex'\n      }\n"
+    },
+    {
+      "id": "op18-p0814d-send-button",
+      "group": "p0814d-send-button",
+      "description": "PATCH(2026-08-14d)：onDocClickCapture 清理（dispose 对称移除）",
+      "find": "        document.removeEventListener('pointerdown', onDocPointerDown, true)\n        document.removeEventListener('keydown', onKeyDown, true)\n        document.removeEventListener('compositionstart', markImeComposing, true)\n        document.removeEventListener('compositionend', markImeEnded, true)\n",
+      "replace": "        document.removeEventListener('pointerdown', onDocPointerDown, true)\n        document.removeEventListener('keydown', onKeyDown, true)\n        document.removeEventListener('click', onDocClickCapture, true)\n        document.removeEventListener('compositionstart', markImeComposing, true)\n        document.removeEventListener('compositionend', markImeEnded, true)\n"
+    },
+    {
+      "id": "op19-p0817-chip-reposition",
+      "group": "p0817-chip-reposition",
+      "description": "PATCH(2026-08-17)：chip 重定位相关监听/observer 的 dispose 清理",
+      "find": "        window.removeEventListener('scroll', onLayoutChange, true)\n        window.removeEventListener('resize', onLayoutChange)\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n",
+      "replace": "        window.removeEventListener('scroll', onLayoutChange, true)\n        window.removeEventListener('resize', onLayoutChange)\n        window.removeEventListener('scroll', scheduleChipUpdate, true)\n        window.removeEventListener('resize', scheduleChipUpdate)\n        document.removeEventListener('input', onComposerInput, true)\n        if (chipPositionFrame !== null) {\n          cancelAnimationFrame(chipPositionFrame)\n          chipPositionFrame = null\n        }\n        if (chipResizeObserver !== null) {\n          chipResizeObserver.disconnect()\n          chipResizeObserver = null\n        }\n        chipComposerCard = null\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n"
+    },
+    {
+      "id": "op20-pkg-id",
+      "group": "pkg-id",
+      "description": "fork 包名：exports.name 同步为 fork 包名",
+      "find": "    exports.name = '@omdsh-dev/dsh-annotation'\n",
+      "replace": "    exports.name = '@dsh-external/dsh-annotation-patched'\n",
+      "adaptedFor": "fd24ef92：尾部新增 exports.inject 行，改用单行锚点"
+    }
+  ],
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配（i18n 工具条、提交链路、updateChip、导出尾部、合成事件签名）"
+}

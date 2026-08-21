@@ -111,9 +111,11 @@ test('client bundle registers ModuleLoader id and exports', () => {
     const { loadId, exported } = loadClient(dom.window)
     assert.equal(loadId, pkg.name)
     assert.equal(exported.name, pkg.name)
-    assert.equal(exported.inject.length, 2)
+    // 上游 v1.4.0 起注入 locale 服务（zh/en 双语 UI）
+    assert.equal(exported.inject.length, 3)
     assert.equal(exported.inject[0], 'sessions')
     assert.equal(exported.inject[1], 'conversation')
+    assert.equal(exported.inject[2], 'locale')
     assert.equal(typeof exported.apply, 'function')
   } finally {
     dom.window.close()

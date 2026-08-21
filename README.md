@@ -6,9 +6,10 @@ DSH Web「选中引用」插件的本地增强版（fork 维护）。
 
 ## 来源
 
-- 上游项目：[omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation)（MIT License，v1.3.13）
+- 上游项目：[omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation)（MIT License，基座 v1.4.1 + issue#20 修复，commit fd24ef92，2026-08-21 升级重放）
 - 上游能力：选中助手回复文字 → 引用（可留空）→ 回车随消息发送；模型按 `Annotation N:` 逐条对照回复（回复中为可悬停芯片）；引用块不出现在自己的气泡里（零闪烁隐藏）
 - 本目录为上游代码 + 本地增强（client.js 内所有改动均带日期 `PATCH(...)` 标记，可 `grep` 定位）
+- 升级方式：`node scripts/apply-patches.mjs --fetch <上游commit> --out client.js` 一键重放全部 fork 补丁（清单见 `patches/manifest.json`）
 
 ## 增强内容（相对上游 v1.3.13）
 
@@ -44,6 +45,7 @@ v2026-08-14 曾改为「拼稿即清」（`attachAndSend` 里 setDraft 后立即
 ### 4. 维护性
 
 - 所有改动带 `PATCH(2026-08-14)` ~ `PATCH(2026-08-17)` 注释标记，上游更新时可快速定位 diff 重新套用
+- **补丁重放工具**（v0.2.0 起）：`scripts/apply-patches.mjs` + `patches/manifest.json`——干净上游产物 → 全局术语改名（批注→引用）→ 包名替换 → 21 条锚定 op 逐条重放（每条锚文本必须恰好命中 1 次），失配即报错并列出适配指引
 - 调试日志 `[annotation] 引用块已拼入草稿…` / 拼稿日志带发送条数（DevTools Console 可查）
 
 ## 安装
@@ -65,8 +67,9 @@ dsh plugin --profile web add <本目录>
 
 ## 维护标记
 
-- 本 fork 所有改动带 `PATCH(2026-08-14)` ~ `PATCH(2026-08-14e)` 注释标记（grep `PATCH(2026-08-14` 可全部定位），上游更新时可快速 diff 重新套用
-- 包名已改为独立 fork 包名 `@dsh-external/dsh-annotation-patched`（v0.1.0），避免与上游 `@omdsh-dev/dsh-annotation` 发布冲突
+- 本 fork 所有改动带 `PATCH(2026-08-14)` ~ `PATCH(2026-08-17)` 注释标记（grep `PATCH(2026-08` 可全部定位），上游更新时用 `scripts/apply-patches.mjs` 重放
+- 包名已改为独立 fork 包名 `@dsh-external/dsh-annotation-patched`（v0.2.0），避免与上游 `@omdsh-dev/dsh-annotation` 发布冲突
+- v0.2.0 升级记录：基座 v1.3.13 → v1.4.1(+issue#20)；5 处锚点适配——①工具条 i18n 化（文案走 t()，「可留空」提示进 zh/en 字典）②attachAndSend(e) 签名（点击路径传合成事件对象）③stripOldBlock 升级双语哨兵（zh 提问：/en Ask:）④updateChip 锚点随 t(chip.count) 更新⑤导出尾部单行锚点；测试断言跟进 inject +locale
 
 ## License
 

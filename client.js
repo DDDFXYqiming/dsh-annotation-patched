@@ -2,9 +2,9 @@
 //
 // 手写 CJS + ModuleLoader 包装（同 omdsh-dev navbar/greeter 模式，零构建
 // 步骤）：纯 DOM 自渲染，无任何 @deepseek-ai 值导入（bundle purity gate 合规）；
-// cordis 服务经 exports.inject 的字符串名接入（sessions / conversation）。
+// cordis 服务经 exports.inject 的字符串名接入（sessions / conversation / locale）。
 //
-// v1.3.x · 自包含引用流（取代 v0.9 chip 设计与 v1.0 发送面板）：
+// v1.4.x · 自包含引用流（取代 v0.9 chip 设计与 v1.0 发送面板）：
 //   1. 选中助手文字 → 工具条「引用」→ 写引用（可留空 = 仅标记原文）
 //   2. 保存后原文亮蓝编号 + 高亮（纯视觉，不弹窗）；跨消息/跨回合连续累积
 //   3. 输入框旁「引用 ×N」标签：悬浮可见全部内容、可逐条删除
@@ -19,17 +19,25 @@
 //      可悬浮芯片（数据取最近一条带标签用户消息的 tag.__annotationItems，刷新
 //      自动重建；改 DOM 前先快照 TreeWalker 收集的文本节点再逐个替换，遍历
 //      中途 replaceChild 会让 walker 指针失效）
+//   7. 语言跟随 DSH locale 服务（v1.4）：UI 文案与协议块 zh/en 双语、实时切换，
+//      隐藏手术与反解析同时兼容「提问：」/「Ask:」与「问题：」老格式
 //
-// 消息格式：我引用了以下 N 处内容…\n\n1. 原文\n   引用：…\n\n
+// 消息格式（zh）：我引用了以下 N 处内容…\n\n1. 原文\n   引用：…\n\n
 //           请用「Annotation 1：…」…\n\n提问：
-// （分隔标记用「提问：」而非「问题：」——标题行「回答我的问题：」里也含它，
-//   气泡隐藏手术会误命中）
+// （en 用 I annotated the following N passage(s)… + Note: … + Ask:；
+//   zh 分隔标记用「提问：」而非「问题：」——标题行「回答我的问题：」里也含
+//   它，气泡隐藏手术会误命中）
 //
 // 不依赖发送完成事件链：watchInputDraft 在初始化时会话未加载时会失效，仅作
 // 暂存入口；气泡装饰走 MutationObserver + 轮询。
 //
 // 判别式与 omdsh-dev/navbar 一致：助手行 = [data-time-hover-root] 且不含
 // user bubble（[class*="bubble"]）。
+// focus-chat（@dingyi222666/dsh-focus-chat）兼容：其会话视图挂载在
+// [data-focus-flow] 内，助手行 = class 含 "assistant" 的容器（CSS Modules
+// 哈希名形如 `<hash>_assistant`，流式期间行自带 data-streaming），用户行
+// 沿用 data-time-hover-root；切换视图 tab 时主视图会卸载，故行判别必须
+// 同时覆盖两种视图结构（见 assistantRows / allMessageRows / assistantRowOf）。
 window.__ModuleLoader__.load({
   // 必须与 package.json "name" 完全一致，否则 client-modules 报：
   // bundle loaded without registering "@dsh-external/dsh-annotation-patched"
@@ -153,6 +161,127 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style)
     }
 
+    // ============================== i18n（zh / en） ==============================
+    // UI 文案与引用协议块双语化：当前语言由 DSH 的 locale 服务驱动
+    // （ctx.locale.getSnapshot().active + subscribe()），服务缺失时回退 zh。
+    // 历史消息的隐藏手术与反解析同时兼容 zh/en 标记，跨语言切换不丢引用。
+    var STR = {
+      zh: {
+        actions: {
+          annotate: '引用',
+          already: '已引用',
+          annotateTitle: '为选中的内容写一条引用（可留空 = 仅引用原文）',
+          alreadyTitle: '这段内容已在引用清单中',
+        },
+        edit: {
+          addTitle: '添加引用',
+          editTitle: '编辑引用',
+          placeholder: '写下引用…（可留空，保存后仅标记原文）',
+          save: '保存引用',
+        },
+        common: { cancel: '取消' },
+        error: { noSelection: '没有选中的内容' },
+        chip: { count: '条引用' },
+        tip: { title: '引用（{n} 条）', notePrefix: '引用：', del: '删' },
+        bubble: { tag: '引用 ×{n}', title: '本消息携带引用（{n} 条）' },
+        reply: {
+          headWithQuote: '引用 {n} 的原文',
+          headNoQuote: '引用 {n}',
+          notePrefix: '你的引用：',
+          missing: '（未找到对应引用条目）',
+        },
+        toast: {
+          attachFail: '引用拼稿失败，消息将不带引用发送：',
+          skipCommand: '本条是斜杠命令，未拼入引用；引用已保留，将随下一条消息发送',
+        },
+        block: {
+          head: '我引用了以下 {n} 处内容（编号与原文对应），请针对它们回答我的问题：',
+          notePrefix: '引用：',
+          format: '请用「Annotation 1：…」到「Annotation {n}：…」的格式，逐条回应上面每一条引用，最后再回答我的问题。',
+          marker: '提问：',
+        },
+      },
+      en: {
+        actions: {
+          annotate: 'Annotate',
+          already: 'Annotated',
+          annotateTitle: 'Write a note about the selected text (leave empty to quote without a note)',
+          alreadyTitle: 'This passage is already in your annotation list',
+        },
+        edit: {
+          addTitle: 'Add annotation',
+          editTitle: 'Edit annotation',
+          placeholder: 'Write a note… (optional; saving only marks the passage)',
+          save: 'Save annotation',
+        },
+        common: { cancel: 'Cancel' },
+        error: { noSelection: 'No text selected' },
+        chip: { count: ' annotation(s)' },
+        tip: { title: 'Annotations ({n})', notePrefix: 'Note: ', del: 'Del' },
+        bubble: { tag: 'Annotations ×{n}', title: 'This message carries {n} annotation(s)' },
+        reply: {
+          headWithQuote: 'Source of annotation {n}',
+          headNoQuote: 'Annotation {n}',
+          notePrefix: 'Your note: ',
+          missing: '(no matching annotation found)',
+        },
+        toast: {
+          attachFail: 'Failed to attach annotations; the message will be sent without them: ',
+          skipCommand: 'Slash command detected — annotations stay pending and will attach to your next message',
+        },
+        block: {
+          head: 'I annotated the following {n} passage(s) (the numbers match the quotes below); please respond to them when answering my question:',
+          notePrefix: 'Note: ',
+          format: 'Please respond to each annotation in the format "Annotation 1: …" through "Annotation {n}: …", then answer my question.',
+          marker: 'Ask:',
+        },
+      },
+    }
+    var currentLang = 'zh'
+    function setLang(id) {
+      currentLang = (id === 'en' || id === 'zh') ? id : 'zh'
+    }
+    function dictVal(lang, key) {
+      var cur = STR[lang]
+      var parts = key.split('.')
+      for (var i = 0; i < parts.length; i++) {
+        if (cur === undefined || cur === null) return undefined
+        cur = cur[parts[i]]
+      }
+      return cur
+    }
+    /** @param {string} key @param {Object<string, string|number>} [params] */
+    function t(key, params) {
+      var s = dictVal(currentLang, key)
+      if (s === undefined) s = dictVal('zh', key)
+      if (s === undefined) s = key
+      if (params !== undefined && params !== null) {
+        for (var k in params) {
+          if (Object.prototype.hasOwnProperty.call(params, k)) {
+            s = s.split('{' + k + '}').join(String(params[k]))
+          }
+        }
+      }
+      return s
+    }
+    // 引用块头部哨兵（zh/en 都识别；兼容历史消息与跨语言切换）。
+    var BLOCK_HEADS = { zh: '我引用了以下', en: 'I annotated the following' }
+    function hasAnnotationBlock(text) {
+      return text.indexOf(BLOCK_HEADS.zh) !== -1 || text.indexOf(BLOCK_HEADS.en) !== -1
+    }
+    // 气泡隐藏手术的分隔标记：当前语言优先，另保留另一语言与「问题：」老格式。
+    var BLOCK_MARKERS = {
+      zh: ['\n提问：', '提问：', '\n问题：', '问题：'],
+      en: ['\nAsk:', 'Ask:'],
+    }
+    function blockMarkers() {
+      return currentLang === 'en'
+        ? BLOCK_MARKERS.en.concat(BLOCK_MARKERS.zh)
+        : BLOCK_MARKERS.zh.concat(BLOCK_MARKERS.en)
+    }
+    // 反解析用的段落级分隔标记（引用块按协议生成，均以 \n\n 开头）。
+    var PARSE_MARKERS = ['\n\n提问：', '\n\n问题：', '\n\nAsk:']
+
     // ============================== 工具 ==============================
     // 助手行判别：0810 snapshot 起助手消息行 = ChatNodeSeat 上的
     // data-chat-flow-kind="assistant-step"（旧版 data-time-hover-root 已不再
@@ -165,6 +294,46 @@ window.__ModuleLoader__.load({
         && !el.hasAttribute('data-turn-tail')
     }
 
+    // ---------- focus-chat（@dingyi222666/dsh-focus-chat）视图兼容 ----------
+    // 该插件在 conversation.view 槽注册「聚焦会话」视图：挂载于
+    // [data-focus-flow]（列容器）→ [data-focus-anchor-key]（行包装）→ 行。
+    // 助手行 = class 含 "assistant" 的容器（CSS Modules 哈希名保留 local 名，
+    // 形如 `<hash>_assistant`；流式期间行自带 data-streaming，停流后移除）。
+    // 用户行保留 data-time-hover-root + [class*="bubble"]，与旧判别式一致。
+    function isFocusFlow(el) {
+      return el !== null && typeof el.closest === 'function'
+        && el.closest('[data-focus-flow]') !== null
+    }
+
+    function isFocusAssistantRow(el) {
+      if (el === null || !el.classList || !isFocusFlow(el)) return false
+      for (var i = 0; i < el.classList.length; i++) {
+        if (el.classList[i].indexOf('assistant') !== -1) return true
+      }
+      return false
+    }
+
+    /** focus 视图的全部消息行（用户 + 助手，DOM 顺序）。只保留最外层助手
+     *  容器（markdown 内部子元素也可能带含 assistant 的类名）。 */
+    function focusMessageRows() {
+      var flow = document.querySelector('[data-focus-flow]')
+      if (flow === null) return []
+      var out = []
+      var all = flow.querySelectorAll('[data-time-hover-root], [class*="assistant"]')
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i]
+        if (el.hasAttribute('data-time-hover-root')) {
+          if (!isAssistantRow(el)) out.push(el)
+          continue
+        }
+        if (!isFocusAssistantRow(el)) continue
+        var p = el.parentElement
+        if (p !== null && p !== flow && isFocusAssistantRow(p)) continue
+        out.push(el)
+      }
+      return out
+    }
+
     function assistantRowOf(node) {
       var el = (node instanceof Element) ? node : (node !== null ? node.parentElement : null)
       while (el !== null && el !== document.body) {
@@ -174,6 +343,14 @@ window.__ModuleLoader__.load({
         if (el.hasAttribute('data-time-hover-root')) {
           return isAssistantRow(el) ? el : null
         }
+        if (isFocusAssistantRow(el)) {
+          // 冒到最外层 focus 助手容器（内部子元素可能也含 assistant 类名）。
+          while (el.parentElement !== null && el.parentElement !== document.body
+            && isFocusAssistantRow(el.parentElement)) {
+            el = el.parentElement
+          }
+          return el
+        }
         el = el.parentElement
       }
       return null
@@ -182,15 +359,21 @@ window.__ModuleLoader__.load({
     function assistantRows() {
       var modern = document.querySelectorAll('[data-chat-flow-kind="assistant-step"]')
       if (modern.length > 0) return Array.prototype.slice.call(modern)
+      var focus = focusMessageRows().filter(isFocusAssistantRow)
+      if (focus.length > 0) return focus
       return Array.prototype.slice.call(document.querySelectorAll('[data-time-hover-root]'))
         .filter(isAssistantRow)
     }
 
     /** 全部消息行（用户 + 助手 + 其它节点）：新版走 data-chat-flow-kind，
-     *  旧版回退 data-time-hover-root。用于气泡装饰、引用条目回溯。 */
+     *  旧版回退 data-time-hover-root；focus-chat 视图单独按 DOM 顺序收集
+     *  （会话视图 tab 切换时主视图会卸载，两种结构不同时存在）。
+     *  用于气泡装饰、引用条目回溯。 */
     function allMessageRows() {
       var modern = document.querySelectorAll('[data-chat-flow-kind]')
       if (modern.length > 0) return Array.prototype.slice.call(modern)
+      var focus = focusMessageRows()
+      if (focus.length > 0) return focus
       return Array.prototype.slice.call(document.querySelectorAll('[data-time-hover-root]'))
     }
 
@@ -408,6 +591,10 @@ window.__ModuleLoader__.load({
       if (saved !== undefined && saved !== null && saved.seqKey !== '') {
         try {
           var item = document.querySelector('[data-chat-anchor-key="' + saved.seqKey + '"]')
+          // focus-chat 视图的锚 key 属性名不同，值语义一致。
+          if (item === null) {
+            item = document.querySelector('[data-focus-anchor-key="' + saved.seqKey + '"]')
+          }
           if (item !== null) {
             var itText = item.textContent || ''
             if (saved.textOffset >= 0) {
@@ -512,6 +699,7 @@ window.__ModuleLoader__.load({
       }
       if (best !== null && (ctx === null || bestScore > 0)) return best
       var flow = document.querySelector('[data-chat-flow]')
+      if (flow === null) flow = document.querySelector('[data-focus-flow]')
       if (flow !== null) {
         var full2 = flow.textContent || ''
         var positions2 = allPositionsOf(flow, quote)
@@ -825,10 +1013,33 @@ window.__ModuleLoader__.load({
         // 引用清单 + 用户输入的问题。用户始终看不到文本被塞进去。
         // IME 铁律（v1.3.10 修了 nativeEvent.keyCode；v1.3.11 补 compositionend
         // 后 Enter keyCode=13 的时序洞）：合成期 / 上屏确认 Enter 绝不能 setDraft。
-        if (e.key === 'Enter' && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {
+        // 修饰键守卫（v1.3.18 修 issue #10）：Shift+Enter 换行、Alt+Enter 默认路径
+        // 不触发拼稿；裸 Enter 继续处理带文字草稿，Cmd/Ctrl+Enter 只接管空草稿
+        // 的纯引用。已有文字时交回 composer，保留宿主的 Queue / Steer 策略。
+        // 纯引用的 Cmd/Ctrl+Enter 需要在这里直接提交：composer 的 accelerated 路径在
+        // 「运行中 + 有排队消息」时会走 steerQueue，而不是发送当前草稿；我们在
+        // capture 阶段 setDraft 后 stopPropagation，主动 submit('queue')，保证
+        // 纯引用能直接发出，同时不会把引用块明文留在输入框。
+        if (e.key === 'Enter' && !e.shiftKey && !e.altKey
+          && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {
           var ta = e.target
           if (ta instanceof HTMLTextAreaElement && ta.closest && ta.closest('[data-composer-card]') !== null) {
-            attachAndSend()
+            var attached = attachAndSend(e)
+            if (attached && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault()
+              e.stopPropagation()
+              var current = sessions.list.getSnapshot().current
+              if (current !== undefined) {
+                var scoped = sessions.scope(current)
+                if (scoped !== undefined) {
+                  try {
+                    ctx.conversation.input.for(scoped).submit('queue')
+                  } catch (err) {
+                    console.warn('[annotation] Cmd/Ctrl+Enter 直接提交失败：', err)
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -858,7 +1069,9 @@ window.__ModuleLoader__.load({
         var isSend = /发送|send|submit/i.test(label)
         if (!isSend || isStop) return
         if (btn.disabled) return
-        attachAndSend()
+        // v1.4.x 适配：attachAndSend(e) 需要 event 判定修饰键；
+        // 点击路径等价裸 Enter（无修饰键），传合成事件对象。
+        attachAndSend({ ctrlKey: false, metaKey: false })
       }
       document.addEventListener('click', onDocClickCapture, true)
 
@@ -894,13 +1107,12 @@ window.__ModuleLoader__.load({
           bar.style.left = ui.pos.left + 'px'
           bar.style.top = ui.pos.top + 'px'
           var already = ui.quotes.some(function (q) { return q.text === ui.quote })
-          // PATCH(2026-08-14c): 移除「引用」按钮——空引用（不写内容直接保存）
-          // 已由「引用」按钮承担（saveAnnotation 支持 note=''），引用按钮是
-          // 临时方案，竞态修复后不再需要。
+          // PATCH(2026-08-14c): 单按钮制——图标恒无（v1.4.x i18n 适配：文案走
+          // t()，「可留空 = 仅引用原文」提示见 annotateTitle 字典补充）。
           bar.appendChild(ghostButton(
             null,
-            '引用',
-            '为选中的内容写一条引用（可留空 = 仅引用原文）',
+            already ? t('actions.already') : t('actions.annotate'),
+            already ? t('actions.alreadyTitle') : t('actions.annotateTitle'),
             already,
             enterEditing,
           ))
@@ -916,9 +1128,9 @@ window.__ModuleLoader__.load({
           head.className = 'dsh-ann-card-head'
           var title = document.createElement('div')
           title.className = 'dsh-ann-card-title'
-          title.textContent = ui.editingId !== null ? '编辑引用' : '添加引用'
+          title.textContent = ui.editingId !== null ? t('edit.editTitle') : t('edit.addTitle')
           head.appendChild(title)
-          head.appendChild(iconButton('dsh-ann-icon', ICONS.close, '取消', closeToolbar))
+          head.appendChild(iconButton('dsh-ann-icon', ICONS.close, t('common.cancel'), closeToolbar))
           card.appendChild(head)
           var quote = document.createElement('div')
           quote.className = 'dsh-ann-quote'
@@ -927,7 +1139,7 @@ window.__ModuleLoader__.load({
           card.appendChild(quote)
           var ta = document.createElement('textarea')
           ta.className = 'dsh-ann-input'
-          ta.placeholder = '写下引用…（可留空，保存后仅标记原文）'
+          ta.placeholder = t('edit.placeholder')
           ta.value = ui.noteDraft
           ta.spellcheck = false
           ta.addEventListener('input', function () { ui.noteDraft = ta.value })
@@ -940,13 +1152,13 @@ window.__ModuleLoader__.load({
           var cancel = document.createElement('button')
           cancel.className = 'dsh-ann-cancel'
           cancel.type = 'button'
-          cancel.textContent = '取消'
+          cancel.textContent = t('common.cancel')
           cancel.addEventListener('click', closeToolbar)
           var save = document.createElement('button')
           save.type = 'button'
           save.className = 'dsh-ann-action'
           save.appendChild(ICONS.check())
-          save.appendChild(document.createTextNode('保存引用'))
+          save.appendChild(document.createTextNode(t('edit.save')))
           save.addEventListener('click', saveAnnotation)
           row.appendChild(cancel)
           row.appendChild(save)
@@ -1108,11 +1320,17 @@ window.__ModuleLoader__.load({
           }
           var node = live.commonAncestorContainer
           var el = node instanceof Element ? node : (node !== null ? node.parentElement : null)
-          while (el !== null && el !== document.body && !el.hasAttribute('data-chat-anchor-key')) {
+          // 主视图锚 key 为 data-chat-anchor-key；focus-chat 视图为
+          // data-focus-anchor-key，两者等价（消息 seq 锚定）。
+          while (el !== null && el !== document.body
+            && !el.hasAttribute('data-chat-anchor-key')
+            && !el.hasAttribute('data-focus-anchor-key')) {
             el = el.parentElement
           }
-          if (el !== null && el.hasAttribute('data-chat-anchor-key')) {
-            anchor.seqKey = el.getAttribute('data-chat-anchor-key') || ''
+          if (el !== null
+            && (el.hasAttribute('data-chat-anchor-key') || el.hasAttribute('data-focus-anchor-key'))) {
+            anchor.seqKey = el.getAttribute('data-chat-anchor-key')
+              || el.getAttribute('data-focus-anchor-key') || ''
             if (textMatch) {
               var itemText = el.textContent || ''
               var realOff = offsetOfRangeInRow(el, live)
@@ -1159,58 +1377,75 @@ window.__ModuleLoader__.load({
       /** 组装引用块（编号 + 原文 + 引用，结尾带唯一的「提问：」分隔标记——
        *  不用「问题：」是因为标题行「回答我的问题：」里也含它，气泡隐藏手术会误命中）。 */
       function buildBlock() {
+        var n = ui.quotes.length
         var parts = ui.quotes.map(function (q, i) {
           var s = (i + 1) + '. ' + q.text.replace(/\n/g, '\n   ')
           if (q.note !== undefined && q.note.trim() !== '') {
-            s += '\n   引用：' + q.note.replace(/\n/g, '\n    ')
+            s += '\n   ' + t('block.notePrefix') + q.note.replace(/\n/g, '\n    ')
           }
           return s
         })
-        return '我引用了以下 ' + ui.quotes.length + ' 处内容（编号与原文对应），请针对它们回答我的问题：\n\n'
+        return t('block.head', { n: n }) + '\n\n'
           + parts.join('\n\n')
-          + '\n\n请用「Annotation 1：…」到「Annotation ' + ui.quotes.length + '：…」的格式，逐条回应上面每一条引用，最后再回答我的问题。\n\n提问：'
+          + '\n\n' + t('block.format', { n: n }) + '\n\n' + t('block.marker')
       }
 
-      /** 从草稿中剥离已残留的旧引用块（"我引用了以下…提问："整块），
-       *  保留用户自己的输入。残留来源：上次 setDraft 后 composer 提交
-       *  失败/未触发（IME 合成、焦点转移、React 状态未刷新等），block
-       *  留在草稿里而 quotes 已清——若不清除，旧块会随下一条消息重复发出，
-       *  且 attachAndSend 的旧守卫会因草稿含"我引用了以下"而拒绝拼新块。
-       *  PATCH(2026-08-14c): 竞态修复——剥离替代 return。 */
+      function shouldAttachForEnter(e, draft) {
+        return !(e.ctrlKey || e.metaKey) || draft.trim() === ''
+      }
+
+      /** 裸斜杠开头的草稿按宿主约定是命令（/goal、/model 等）：
+       *  宿主输入机靠「草稿以命令 token 开头」维持命令声明。 */
+      function isCommandDraft(draft) {
+        return draft.trimStart().charAt(0) === '/'
+      }
+
+      /** 从草稿中剥离残留的旧引用块（"我引用了以下…提问：" / "I annotated the
+       *  following…Ask:" 整块），保留用户自己的输入。残留来源：上次 setDraft 后
+       *  提交失败/未触发，旧块留在草稿里而引用集已变——若不剥离，旧块会随下一条
+       *  消息重复发出且内容过期。PATCH(2026-08-14c): 竞态修复——剥离替代跳过；
+       *  全局替换一次剥净多个残留；双语哨兵适配 v1.4 i18n。非贪婪匹配到第一个
+       *  块尾标记：块拼在草稿最前，用户输入在其后，第一个标记必属块尾。 */
       function stripOldBlock(draft) {
-        if (draft.indexOf('我引用了以下') === -1) return draft
-        // block 格式固定：以「我引用了以下」开头、以「\n\n提问：」收尾（buildBlock）。
-        // 非贪婪匹配到第一个「\n\n提问：」（block 拼在草稿最前，用户输入在其后，
-        // 用户输入里即使含「提问：」也不会误切——第一个标记必属 block 结尾）。
-        // 全局替换：连续失败可能残留多个 block，一次剥净。
-        // 前导 \n* 吃掉 block 前的分隔换行（多个残留时）；尾部 (?:\n+)? 吃掉
-        // block 与用户输入之间的拼接换行，剥离后不留空行。
-        return draft.replace(/\n*我引用了以下[\s\S]*?\n\n提问：(?:\n+)?/g, '')
+        if (!hasAnnotationBlock(draft)) return draft
+        return draft.replace(
+          /\n*(?:我引用了以下|I annotated the following)[\s\S]*?\n\n(?:提问：|Ask:)(?:\n+)?/g,
+          '',
+        )
       }
 
       /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。
-       *  PATCH(2026-08-14c): 不再"拼稿即清"——quotes 清理只认「发送确认」
-       *  （watchInputDraft 的草稿从有→空 / decorateAll 的气泡出现），
-       *  消除提前清空导致的引用丢失（现象 A）与残留块重复伴随（现象 B）。
-       *  残留草稿用 stripOldBlock 剥离后拼入新块，旧守卫（草稿含 block 即
-       *  return）删除，否则残留会让后续引用永远拼不进去。 */
-      function attachAndSend() {
+       *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */
+      function attachAndSend(e) {
         var current = sessions.list.getSnapshot().current
-        if (current === undefined) return
+        if (current === undefined) return false
         try {
           var scoped = sessions.scope(current)
-          if (scoped === undefined) return
+          if (scoped === undefined) return false
           var shell = ctx.conversation.input.for(scoped)
           var st = shell.state.getSnapshot()
           var draft = st.draft || ''
+          if (!shouldAttachForEnter(e, draft)) return false
+          // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，
+          // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会
+          // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。
+          if (isCommandDraft(draft)) {
+            showToast(t('toast.skipCommand'))
+            return false
+          }
+          // PATCH(2026-08-14c): 残留块不跳过、剥离后重拼——上次追加未发送时草稿
+          // 里的旧块可能已过期（引用集已变），stripOldBlock 剥旧块再拼新块，
+          // 用户已输入文字保留在块后；发送确认制清理（watchInputDraft）不受影响。
           var clean = stripOldBlock(draft)
           var block = buildBlock()
-          var sentCount = ui.quotes.length
           shell.setDraft(block + (clean === '' ? '' : '\n' + clean))
-          console.log('[annotation] 引用块已拼入草稿，回车将随消息发送（' + sentCount + ' 条）')
+          annotationAttached = true
+          console.log('[annotation] 引用块已拼入草稿，回车将随消息发送（' + ui.quotes.length + ' 条）')
+          return true
         } catch (err) {
           console.warn('[annotation] 引用拼稿失败：', err)
-          showToast('引用拼稿失败，消息将不带引用发送：' + (err && err.message ? err.message : err))
+          showToast(t('toast.attachFail') + (err && err.message ? err.message : err))
+          return false
         }
       }
 
@@ -1231,7 +1466,7 @@ window.__ModuleLoader__.load({
 
       function saveAnnotation() {
         var text = ui.quote
-        if (text === '') { ui.error = '没有选中的内容'; render(); return }
+        if (text === '') { ui.error = t('error.noSelection'); render(); return }
         var note = ui.noteDraft.trim()
         // 编辑已有引用（点击角标进入）：按 id 更新引用内容。
         if (ui.editingId !== null) {
@@ -1369,7 +1604,7 @@ window.__ModuleLoader__.load({
         b.style.cssText = 'color:var(--dsw-alias-text-accent,#4c9aff);font-weight:700;'
         b.textContent = String(ui.quotes.length)
         chipLayer.appendChild(b)
-        chipLayer.appendChild(document.createTextNode('条引用'))
+        chipLayer.appendChild(document.createTextNode(t('chip.count')))
         if (card === null) { chipLayer.style.display = 'none'; return }
         var r = card.getBoundingClientRect()
         var w = chipLayer.offsetWidth || 80
@@ -1406,7 +1641,7 @@ window.__ModuleLoader__.load({
         el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
         var head = document.createElement('div')
         head.style.cssText = 'font-weight:600;margin-bottom:6px;'
-        head.textContent = '引用（' + ui.quotes.length + ' 条）'
+        head.textContent = t('tip.title', { n: ui.quotes.length })
         el.appendChild(head)
         for (var i = 0; i < ui.quotes.length; i++) {
           var q = ui.quotes[i]
@@ -1423,12 +1658,12 @@ window.__ModuleLoader__.load({
           if (q.note !== undefined && q.note.trim() !== '') {
             var note = document.createElement('div')
             note.style.cssText = 'font-size:11px;color:var(--dsw-alias-label-secondary);margin:2px 0 0 22px;word-break:break-word;'
-            note.textContent = '引用：' + truncate(q.note, 60)
+            note.textContent = t('tip.notePrefix') + truncate(q.note, 60)
             item.appendChild(note)
           }
           var del = document.createElement('button')
           del.type = 'button'
-          del.textContent = '删'
+          del.textContent = t('tip.del')
           del.style.cssText = 'margin-left:8px;background:transparent;border:1px solid rgba(255,107,107,.4);color:#ff8a8a;border-radius:6px;font-size:10px;cursor:pointer;padding:1px 6px;'
           ;(function (qid) {
             del.addEventListener('click', function (ev) {
@@ -1453,6 +1688,9 @@ window.__ModuleLoader__.load({
 
       // ---------- 发送完成监听（草稿从有内容变空 → 清空引用集） ----------
       var inputUnsub = null
+      // 仅当引用块真正拼入过草稿（用户按过回车）才在草稿清空时清除引用，
+      // 避免普通草稿编辑（打字后删字）误触发「已发送」判定而清空引用集。
+      var annotationAttached = false
       function watchInputDraft() {
         if (typeof inputUnsub === 'function') { inputUnsub(); inputUnsub = null }
         var id = sessions.list.getSnapshot().current
@@ -1469,11 +1707,12 @@ window.__ModuleLoader__.load({
             if (ui.quotes.length === 0) return
             // 发送完成：草稿从有内容变空 → 脚标消失、编号下次从 1 开始；
             // 同时在刚发出的用户消息气泡上贴「N 条引用」标签。
-            if (wasHad && d === '') {
+            if (wasHad && d === '' && annotationAttached) {
               var sentItems = ui.quotes.map(function (q) {
                 return { text: q.text, note: q.note || '' }
               })
               ui.quotes = []
+              annotationAttached = false
               tipLayer.textContent = ''
               updateChip()
               renderMarkers()
@@ -1501,18 +1740,18 @@ window.__ModuleLoader__.load({
             nodes.push(n)
             full += n.nodeValue || ''
           }
-          // 标记定位：优先「\n提问：」→「\n问题：」→ 裸「提问：」→ 裸「问题：」。
+          // 标记定位：当前语言优先（zh「提问：」/ en「Ask:」，均先带「\n」再裸匹配），
+          // 另兼容另一语言与「问题：」老格式，保证历史消息跨语言切换可解析。
+          var markers = blockMarkers()
           var marker = -1
-          var pairs = [['\n提问：', '\n问题：'], ['提问：', '问题：']]
-          for (var p = 0; p < pairs.length && marker === -1; p++) {
-            for (var k = 0; k < 2; k++) {
-              var idx = full.lastIndexOf(pairs[p][k])
-              if (idx !== -1) { marker = idx; break }
-            }
+          var markerStr = ''
+          for (var p = 0; p < markers.length && marker === -1; p++) {
+            var idx = full.lastIndexOf(markers[p])
+            if (idx !== -1) { marker = idx; markerStr = markers[p] }
           }
           if (marker === -1) return false
-          // 标记若带「\n」前缀（段落起头），切掉长度 4（\n提问：），否则 3（提问：）。
-          var skip = full.charAt(marker) === '\n' ? 4 : 3
+          // 连同分隔标记一起切掉，保留其后的问题。
+          var skip = markerStr.length
           // 定位到具体文本节点。
           var pos = 0
           var ti = -1
@@ -1546,8 +1785,11 @@ window.__ModuleLoader__.load({
         try {
           var b = row.querySelector('[class*="bubble"]')
           var text = (b ? b.textContent : '') || ''
-          var mi = text.lastIndexOf('\n\n提问：')
-          if (mi === -1) mi = text.lastIndexOf('\n\n问题：')
+          var mi = -1
+          for (var mk = 0; mk < PARSE_MARKERS.length; mk++) {
+            var pmi = text.lastIndexOf(PARSE_MARKERS[mk])
+            if (pmi > mi) mi = pmi
+          }
           if (mi !== -1) text = text.slice(0, mi)
           var nl = text.indexOf('\n\n')
           var body = nl === -1 ? '' : text.slice(nl + 2)
@@ -1558,7 +1800,7 @@ window.__ModuleLoader__.load({
             if (mm === null) continue
             var item = mm[2]
             var note = ''
-            var nm = /\n   引用：([\s\S]*)$/.exec(item)
+            var nm = /\n\s*(?:引用：|Note:)\s*([\s\S]*)$/.exec(item)
             if (nm !== null) { note = nm[1].trim(); item = item.slice(0, nm.index) }
             out.push({ text: item.replace(/\n   /g, '\n').trim(), note: note })
           }
@@ -1572,7 +1814,7 @@ window.__ModuleLoader__.load({
         var bubble = row.querySelector('[class*="bubble"]') || row
         var tag = document.createElement('span')
         tag.setAttribute('data-annotation-bubble-tag', '')
-        tag.textContent = '引用 ×' + items.length
+        tag.textContent = t('bubble.tag', { n: items.length })
         tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin:4px 0 0 4px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;cursor:default;'
         ;(function (list) {
           tag.addEventListener('mouseenter', function () {
@@ -1582,7 +1824,7 @@ window.__ModuleLoader__.load({
             el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
             var head = document.createElement('div')
             head.style.cssText = 'font-weight:600;margin-bottom:6px;'
-            head.textContent = '本消息携带引用（' + list.length + ' 条）'
+            head.textContent = t('bubble.title', { n: list.length })
             el.appendChild(head)
             for (var i = 0; i < list.length; i++) {
               var item = document.createElement('div')
@@ -1598,7 +1840,7 @@ window.__ModuleLoader__.load({
               if (list[i].note !== '') {
                 var note = document.createElement('div')
                 note.style.cssText = 'font-size:11px;color:var(--dsw-alias-label-secondary);margin:2px 0 0 22px;word-break:break-word;'
-                note.textContent = '引用：' + truncate(list[i].note, 60)
+                note.textContent = t('tip.notePrefix') + truncate(list[i].note, 60)
                 item.appendChild(note)
               }
               el.appendChild(item)
@@ -1665,7 +1907,7 @@ window.__ModuleLoader__.load({
         var rows = assistantRows()
         for (var i = 0; i < rows.length; i++) {
           var el = rows[i]
-          if (!isAssistantRow(el)) continue
+          if (!isAssistantRow(el) && !isFocusAssistantRow(el)) continue
           // 新版 data-streaming 标记在 AssistantMarkdown 内部元素上（行元素
           // 本身没有）——必须查行内，否则流式输出途中就把「Annotation N：」
           // 替换成芯片，与 React 正在更新的文本节点冲突，整条回复可能渲染
@@ -1743,7 +1985,7 @@ window.__ModuleLoader__.load({
           el.style.cssText = 'position:fixed;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
           var head = document.createElement('div')
           head.style.cssText = 'font-weight:600;margin-bottom:6px;'
-          head.textContent = item !== undefined ? '引用 ' + num + ' 的原文' : '引用 ' + num
+          head.textContent = item !== undefined ? t('reply.headWithQuote', { n: num }) : t('reply.headNoQuote', { n: num })
           el.appendChild(head)
           if (item !== undefined) {
             var quote = document.createElement('div')
@@ -1753,13 +1995,13 @@ window.__ModuleLoader__.load({
             if (item.note !== '') {
               var note = document.createElement('div')
               note.style.cssText = 'font-size:11px;color:var(--dsw-alias-text-accent,#4c9aff);margin-top:6px;word-break:break-word;'
-              note.textContent = '你的引用：' + truncate(item.note, 80)
+              note.textContent = t('reply.notePrefix') + truncate(item.note, 80)
               el.appendChild(note)
             }
           } else {
             var none = document.createElement('div')
             none.style.cssText = 'font-size:11px;color:var(--dsw-alias-label-tertiary);'
-            none.textContent = '（未找到对应引用条目）'
+            none.textContent = t('reply.missing')
             el.appendChild(none)
           }
           tipLayer.appendChild(el)
@@ -1789,7 +2031,7 @@ window.__ModuleLoader__.load({
             if (el.hasAttribute('data-pending-steering')) continue
             if (el.querySelector('[data-annotation-bubble-tag]') !== null) continue
             var b = el.querySelector('[class*="bubble"]')
-            if (b === null || (b.textContent || '').indexOf('我引用了以下') === -1) continue
+            if (b === null || !hasAnnotationBlock(b.textContent || '')) continue
             // 最新一条优先消费发送时暂存的数据；其余从气泡文本反解析（须在隐藏前）。
             var items = null
             if (i === rows.length - 1 && pendingDeco.length > 0) items = pendingDeco.pop().items
@@ -1819,6 +2061,37 @@ window.__ModuleLoader__.load({
         if (decoTimer === null) decoTimer = setInterval(decorateAll, 1000)
       }
 
+      // ---------- locale 服务（zh/en）订阅与实时回流 ----------
+      // locale.subscribe() 触发时：重绘打开中的浮层、更新输入框旁计数与历史气泡标签。
+      // 服务缺失（旧 host / 测试环境）时保持 zh，全部功能不变。
+      var localeUnsub = null
+      function applyLocale() {
+        var next = 'zh'
+        try {
+          if (ctx.locale !== undefined && ctx.locale !== null
+            && typeof ctx.locale.getSnapshot === 'function') {
+            var snap = ctx.locale.getSnapshot()
+            if (snap !== undefined && snap !== null && snap.active) next = String(snap.active)
+          }
+        } catch (_) { /* keep zh */ }
+        if (next === currentLang) return
+        setLang(next)
+        if (ui.mode !== 'closed') render()
+        updateChip()
+        // 打开的悬浮面板按新语言关闭（下次 hover 以新语言重建）。
+        tipLayer.textContent = ''
+        var tags = document.querySelectorAll('[data-annotation-bubble-tag]')
+        for (var i = 0; i < tags.length; i++) {
+          var items = tags[i].__annotationItems
+          if (Array.isArray(items)) tags[i].textContent = t('bubble.tag', { n: items.length })
+        }
+      }
+      applyLocale()
+      if (ctx.locale !== undefined && ctx.locale !== null
+        && typeof ctx.locale.subscribe === 'function') {
+        try { localeUnsub = ctx.locale.subscribe(applyLocale) } catch (_) { localeUnsub = null }
+      }
+
       // ---------- 会话切换时收起浮窗并清空引用 ----------
       var lastSessionId = sessions.list.getSnapshot().current
       var unsub = sessions.list.subscribe(function () {
@@ -1827,6 +2100,7 @@ window.__ModuleLoader__.load({
         lastSessionId = cur
         if (ui.mode !== 'closed') closeToolbar()
         ui.quotes = []
+        annotationAttached = false
         ui.noteDraft = ''
         tipLayer.textContent = ''
         updateChip()
@@ -1866,6 +2140,7 @@ window.__ModuleLoader__.load({
         observer.disconnect()
         if (typeof unsub === 'function') unsub()
         if (typeof inputUnsub === 'function') inputUnsub()
+        if (typeof localeUnsub === 'function') localeUnsub()
         if (decoTimer !== null) { clearInterval(decoTimer); decoTimer = null }
         chipLayer.remove()
         tipLayer.remove()
@@ -1875,7 +2150,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.name = '@dsh-external/dsh-annotation-patched'
-    exports.inject = ['sessions', 'conversation']
+    exports.inject = ['sessions', 'conversation', 'locale']
     exports.apply = apply
 
     return module.exports
