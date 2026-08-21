@@ -1,3 +1,5 @@
+简体中文 | [English](README.en.md)
+
 # dsh-annotation-patched
 
 DSH Web「选中引用」插件的本地增强版（fork 维护）。
