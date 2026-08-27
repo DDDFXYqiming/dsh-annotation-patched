@@ -987,13 +987,11 @@ window.__ModuleLoader__.load({
         }
         return false
       }
+      // 内容 observer 只绑定当前消息流，避免 document.body 上任意属性/浮层变化
+      // 都触发 O(全部消息行) 的 decorateAll。另用一个仅监听 childList 的轻量
+      // rootObserver 处理 SPA 会话切换时消息流/composer 根节点整体替换。
+      var observerTarget = null
       var observer = new MutationObserver(function (mutations) {
-        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需在 DOM 变化
-        // 后重新取锚。仅在节点身份变化时调度，避免 chipLayer 自己的 DOM 更新形成循环。
-        if (ui.quotes.length > 0
-          && document.querySelector('[data-composer-card]') !== chipComposerCard) {
-          scheduleChipUpdate()
-        }
         if (!mutationRelevant(mutations)) return
         onLayoutChange()
         // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：
@@ -1001,7 +999,29 @@ window.__ModuleLoader__.load({
         // 用户看不到「先显示引用块再隐藏」的闪烁。
         decorateAll()
       })
-      observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true })
+      function messageFlowRoot() {
+        return document.querySelector('[data-chat-flow]')
+          || document.querySelector('[data-focus-flow]')
+      }
+      function bindMessageObserver() {
+        var next = messageFlowRoot()
+        if (next === observerTarget) return
+        observer.disconnect()
+        observerTarget = next
+        if (next !== null) {
+          observer.observe(next, { childList: true, subtree: true, characterData: true })
+        }
+      }
+      var rootObserver = new MutationObserver(function () {
+        bindMessageObserver()
+        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需重新取锚。
+        if (ui.quotes.length > 0
+          && document.querySelector('[data-composer-card]') !== chipComposerCard) {
+          scheduleChipUpdate()
+        }
+      })
+      rootObserver.observe(document.body, { childList: true, subtree: true })
+      bindMessageObserver()
 
       function onKeyDown(e) {
         if (e.key === 'Escape') {
@@ -2055,10 +2075,24 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 发送/初次挂载后做一个最多 5 秒的有界兜底轮询；正常更新由消息流
+      // MutationObserver 驱动。这样仍覆盖异步 hydration，同时不再永久每秒全量扫描。
       var decoTimer = null
+      var decoDeadline = 0
+      function scheduleDecoratePoll() {
+        if (decoTimer !== null) return
+        decoTimer = setTimeout(function tickDecorate() {
+          decoTimer = null
+          decorateAll()
+          if (Date.now() < decoDeadline) {
+            decoTimer = setTimeout(tickDecorate, 500)
+          }
+        }, 250)
+      }
       function kickDecorate() {
         decorateAll()
-        if (decoTimer === null) decoTimer = setInterval(decorateAll, 1000)
+        decoDeadline = Date.now() + 5000
+        scheduleDecoratePoll()
       }
 
       // ---------- locale 服务（zh/en）订阅与实时回流 ----------
@@ -2100,6 +2134,9 @@ window.__ModuleLoader__.load({
         lastSessionId = cur
         if (ui.mode !== 'closed') closeToolbar()
         ui.quotes = []
+        // pendingDeco 属于上一会话的发送暂存；跨会话保留会把 hover 数据
+        // 贴到新会话最新一条用户消息上。
+        pendingDeco = []
         annotationAttached = false
         ui.noteDraft = ''
         tipLayer.textContent = ''
@@ -2138,10 +2175,13 @@ window.__ModuleLoader__.load({
         chipComposerCard = null
         host.removeEventListener('pointerdown', onHostPointerDown)
         observer.disconnect()
+        rootObserver.disconnect()
+        observerTarget = null
         if (typeof unsub === 'function') unsub()
         if (typeof inputUnsub === 'function') inputUnsub()
         if (typeof localeUnsub === 'function') localeUnsub()
-        if (decoTimer !== null) { clearInterval(decoTimer); decoTimer = null }
+        if (decoTimer !== null) { clearTimeout(decoTimer); decoTimer = null }
+        decoDeadline = 0
         chipLayer.remove()
         tipLayer.remove()
         host.remove()

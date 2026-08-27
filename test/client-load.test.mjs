@@ -137,6 +137,15 @@ test('apply returns a disposable cleanup without throwing', () => {
   }
 })
 
+test('session changes clear pending decoration and polling is bounded', () => {
+  const source = readFileSync(resolve(root, 'client.js'), 'utf8')
+  assert.match(source, /ui\.quotes = \[\][\s\S]{0,240}pendingDeco = \[\]/)
+  assert.doesNotMatch(source, /setInterval\(decorateAll/)
+  assert.match(source, /decoDeadline = Date\.now\(\) \+ 5000/)
+  assert.match(source, /rootObserver\.observe\(document\.body, \{ childList: true, subtree: true \}\)/)
+  assert.doesNotMatch(source, /observer\.observe\(document\.body/)
+})
+
 test('node half exports plugin identity', async () => {
   const mod = await import(pathToFileURL(resolve(root, 'index.mjs')).href)
   assert.equal(mod.default.name, pkg.name)
