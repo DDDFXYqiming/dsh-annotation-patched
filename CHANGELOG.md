@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1] - 2026-09-01
+
+### 修复（宿主 composer Lexical 化）
+- 宿主 DSH 的输入框由 `<textarea>` 换成 Lexical `ComposerContentEditable`（`<div contenteditable="true">`）后，回车拼稿守卫 `ta instanceof HTMLTextAreaElement` 永不成立：引用块不随消息发出，且 `annotationAttached` 恒 false 导致「草稿变空即清空」的确认链也不触发——引用集与「N 条引用」chip 常驻。现改为 `isComposerEditor()` 统一判别，**textarea（旧宿主）与 contenteditable（新宿主机）都认**，向后兼容。
+- `focusComposer()`：同样只认 textarea → 保存引用后不再自动聚焦。现两种输入面都聚焦（textarea 走 `setSelectionRange`，contenteditable 用 Range 折叠到文末）。
+- chip 的 `ResizeObserver`：改观察 `textarea` 或 `[contenteditable="true"]`。
+
+### 清单补录
+- `patches/manifest.json`：补录 6c6dd18（2026-08-27，会话切换清 pendingDeco / observer 收敛 / 有界轮询）漏记的 4 组 op（group `p0827-flow-observer`），并追加本次 4 组 op（group `p0901-lexical-compat`）；ops 21 → 29。
+- 全量重放校验通过：`node scripts/apply-patches.mjs --fetch fd24ef92 --out rebuilt.js --expect client.js` → 29/29 应用、字节级一致。
+
+### 测试
+- `test/client-load.test.mjs`：新增两条端到端回归（选区 → 引用 → 保存 → 回车拼稿），分别用 contenteditable 与 textarea 两种 composer 形态；退回旧守卫时 contenteditable 用例失败（可证伪）。6/6 通过。
+
 ## [0.2.0] - 2026-08-21
 
 ### 升级

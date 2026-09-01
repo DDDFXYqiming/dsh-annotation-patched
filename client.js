@@ -1023,6 +1023,24 @@ window.__ModuleLoader__.load({
       rootObserver.observe(document.body, { childList: true, subtree: true })
       bindMessageObserver()
 
+      // ---------- composer 输入面判别（textarea / Lexical contenteditable） ----------
+      // PATCH(2026-09-01-lexical): 宿主 composer 从 <textarea> 换成 Lexical
+      // contenteditable（ComposerContentEditable），判别必须同时认两种形态。
+      // 旧 DSH snapshot 的 composer 是 <textarea>；新 snapshot（Lexical 化的
+      // ComposerContentEditable）是 <div contenteditable="true">。只认 textarea 会让
+      // 回车拼稿守卫永不成立：引用块不随消息发出，引用集也不被清空（chip 常驻）。
+      /** @param {EventTarget|null} el @returns {boolean} 事件目标是否为 composer 输入面 */
+      function isComposerEditor(el) {
+        if (!(el instanceof Element)) return false
+        if (typeof el.closest !== 'function') return false
+        if (el.closest('[data-composer-card]') === null) return false
+        if (el instanceof HTMLTextAreaElement) return true
+        if (el.isContentEditable === true) return true
+        // jsdom / 无 isContentEditable 的实现兜底：Lexical 根节点是 contenteditable="true"，
+        // 事件目标可能是其内部段落/文本容器，向上找一次即可。
+        return el.closest('[contenteditable="true"]') !== null
+      }
+
       function onKeyDown(e) {
         if (e.key === 'Escape') {
           if (ui.mode !== 'closed') closeToolbar()
@@ -1043,7 +1061,8 @@ window.__ModuleLoader__.load({
         if (e.key === 'Enter' && !e.shiftKey && !e.altKey
           && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {
           var ta = e.target
-          if (ta instanceof HTMLTextAreaElement && ta.closest && ta.closest('[data-composer-card]') !== null) {
+          // PATCH(2026-09-01-lexical): 旧守卫只认 HTMLTextAreaElement → Lexical 下永不成立
+          if (isComposerEditor(ta)) {
             var attached = attachAndSend(e)
             if (attached && (e.ctrlKey || e.metaKey)) {
               e.preventDefault()
@@ -1475,12 +1494,27 @@ window.__ModuleLoader__.load({
       // 会强制滚动页面（视觉上"卡一下"）；延迟一帧让卡片关闭动画先完成，
       // 焦点回归更平滑。
       function focusComposer() {
+        // PATCH(2026-09-01-lexical): 两种 composer 形态都要能聚焦：老版 <textarea>，新版 Lexical
+        // contenteditable（选择器不带引号值会漏掉 div[contenteditable="true"]）。
         var ta = document.querySelector('[data-composer-card] textarea')
-        if (!(ta instanceof HTMLTextAreaElement) || ta.disabled) return
+          || document.querySelector('[data-composer-card] [contenteditable="true"]')
+        if (!(ta instanceof HTMLElement) || ta.disabled) return
         requestAnimationFrame(function () {
           if (!ta.isConnected) return
           ta.focus({ preventScroll: true })
-          ta.setSelectionRange(ta.value.length, ta.value.length)
+          if (ta instanceof HTMLTextAreaElement) {
+            ta.setSelectionRange(ta.value.length, ta.value.length)
+            return
+          }
+          // contenteditable：光标放到文末（Lexical 会接管后续输入）
+          try {
+            var sel = window.getSelection()
+            var range = document.createRange()
+            range.selectNodeContents(ta)
+            range.collapse(false)
+            sel.removeAllRanges()
+            sel.addRange(range)
+          } catch (_) { /* 光标定位失败不影响聚焦 */ }
         })
       }
 
@@ -1599,8 +1633,10 @@ window.__ModuleLoader__.load({
           // 可能收不到变化；一并观察这两个节点，兼容不同 DSH snapshot。
           var inputScroll = card.querySelector('[data-input-scroll]')
           if (inputScroll !== null) chipResizeObserver.observe(inputScroll)
-          var textarea = card.querySelector('textarea')
-          if (textarea !== null) chipResizeObserver.observe(textarea)
+          // PATCH(2026-09-01-lexical): 输入面是 textarea 或 contenteditable，两者都观察
+          var inputBox = card.querySelector('textarea')
+            || card.querySelector('[contenteditable="true"]')
+          if (inputBox !== null) chipResizeObserver.observe(inputBox)
         }
       }
 

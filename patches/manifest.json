@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 21,
-  "verifiedAgainst": "待回填：升级产物通过 node --check + jsdom 加载测试",
+  "opsCount": 29,
+  "verifiedAgainst": "2026-09-01 全量重放字节校验通过：fd24ef92 基座 + terminology + 29 ops == client.js；node --check + jsdom 测试 6/6（含 contenteditable / textarea 双 composer 回归）",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -168,7 +168,63 @@
       "find": "    exports.name = '@omdsh-dev/dsh-annotation'\n",
       "replace": "    exports.name = '@dsh-external/dsh-annotation-patched'\n",
       "adaptedFor": "fd24ef92：尾部新增 exports.inject 行，改用单行锚点"
+    },
+    {
+      "id": "op21-flow-observer",
+      "group": "p0827-flow-observer",
+      "description": "补录 6c6dd18（2026-08-27）漏记改动：会话切换清空 pendingDeco / MutationObserver 收敛到消息流根节点 / 装饰轮询改有界 setTimeout（hunk 0）",
+      "find": "\n        }\n        return false\n      }\n      var observer = new MutationObserver(function (mutations) {\n        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需在 DOM 变化\n        // 后重新取锚。仅在节点身份变化时调度，避免 chipLayer 自己的 DOM 更新形成循环。\n        if (ui.quotes.length > 0\n          && document.querySelector('[data-composer-card]') !== chipComposerCard) {\n          scheduleChipUpdate()\n        }\n        if (!mutationRelevant(mutations)) return\n        onLayoutChange()\n        // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：\n",
+      "replace": "\n        }\n        return false\n      }\n      // 内容 observer 只绑定当前消息流，避免 document.body 上任意属性/浮层变化\n      // 都触发 O(全部消息行) 的 decorateAll。另用一个仅监听 childList 的轻量\n      // rootObserver 处理 SPA 会话切换时消息流/composer 根节点整体替换。\n      var observerTarget = null\n      var observer = new MutationObserver(function (mutations) {\n        if (!mutationRelevant(mutations)) return\n        onLayoutChange()\n        // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：\n"
+    },
+    {
+      "id": "op22-lexical-composer-editor",
+      "group": "p0901-lexical-compat",
+      "description": "PATCH(2026-09-01-lexical)：新增 composer 输入面判别 isComposerEditor()，同时认 <textarea>（旧宿主）与 Lexical contenteditable（新宿主）",
+      "find": "\n        // 用户看不到「先显示引用块再隐藏」的闪烁。\n        decorateAll()\n      })\n      observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true })\n\n      function onKeyDown(e) {\n        if (e.key === 'Escape') {\n",
+      "replace": "\n        // 用户看不到「先显示引用块再隐藏」的闪烁。\n        decorateAll()\n      })\n      function messageFlowRoot() {\n        return document.querySelector('[data-chat-flow]')\n          || document.querySelector('[data-focus-flow]')\n      }\n      function bindMessageObserver() {\n        var next = messageFlowRoot()\n        if (next === observerTarget) return\n        observer.disconnect()\n        observerTarget = next\n        if (next !== null) {\n          observer.observe(next, { childList: true, subtree: true, characterData: true })\n        }\n      }\n      var rootObserver = new MutationObserver(function () {\n        bindMessageObserver()\n        // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需重新取锚。\n        if (ui.quotes.length > 0\n          && document.querySelector('[data-composer-card]') !== chipComposerCard) {\n          scheduleChipUpdate()\n        }\n      })\n      rootObserver.observe(document.body, { childList: true, subtree: true })\n      bindMessageObserver()\n\n      // ---------- composer 输入面判别（textarea / Lexical contenteditable） ----------\n      // PATCH(2026-09-01-lexical): 宿主 composer 从 <textarea> 换成 Lexical\n      // contenteditable（ComposerContentEditable），判别必须同时认两种形态。\n      // 旧 DSH snapshot 的 composer 是 <textarea>；新 snapshot（Lexical 化的\n      // ComposerContentEditable）是 <div contenteditable=\"true\">。只认 textarea 会让\n      // 回车拼稿守卫永不成立：引用块不随消息发出，引用集也不被清空（chip 常驻）。\n      /** @param {EventTarget|null} el @returns {boolean} 事件目标是否为 composer 输入面 */\n      function isComposerEditor(el) {\n        if (!(el instanceof Element)) return false\n        if (typeof el.closest !== 'function') return false\n        if (el.closest('[data-composer-card]') === null) return false\n        if (el instanceof HTMLTextAreaElement) return true\n        if (el.isContentEditable === true) return true\n        // jsdom / 无 isContentEditable 的实现兜底：Lexical 根节点是 contenteditable=\"true\"，\n        // 事件目标可能是其内部段落/文本容器，向上找一次即可。\n        return el.closest('[contenteditable=\"true\"]') !== null\n      }\n\n      function onKeyDown(e) {\n        if (e.key === 'Escape') {\n"
+    },
+    {
+      "id": "op23-lexical-enter-guard",
+      "group": "p0901-lexical-compat",
+      "description": "PATCH(2026-09-01-lexical)：回车拼稿守卫改用 isComposerEditor()——旧守卫只认 HTMLTextAreaElement，宿主 composer Lexical 化后永不成立（引用不随消息发出、chip 常驻）",
+      "find": "\n        if (e.key === 'Enter' && !e.shiftKey && !e.altKey\n          && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {\n          var ta = e.target\n          if (ta instanceof HTMLTextAreaElement && ta.closest && ta.closest('[data-composer-card]') !== null) {\n            var attached = attachAndSend(e)\n            if (attached && (e.ctrlKey || e.metaKey)) {\n              e.preventDefault()\n",
+      "replace": "\n        if (e.key === 'Enter' && !e.shiftKey && !e.altKey\n          && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {\n          var ta = e.target\n          // PATCH(2026-09-01-lexical): 旧守卫只认 HTMLTextAreaElement → Lexical 下永不成立\n          if (isComposerEditor(ta)) {\n            var attached = attachAndSend(e)\n            if (attached && (e.ctrlKey || e.metaKey)) {\n              e.preventDefault()\n"
+    },
+    {
+      "id": "op24-lexical-focus-composer",
+      "group": "p0901-lexical-compat",
+      "description": "PATCH(2026-09-01-lexical)：focusComposer 兼容 contenteditable 输入面（textarea 走 setSelectionRange，contenteditable 用 Range 折叠到文末）",
+      "find": "\n      // 会强制滚动页面（视觉上\"卡一下\"）；延迟一帧让卡片关闭动画先完成，\n      // 焦点回归更平滑。\n      function focusComposer() {\n        var ta = document.querySelector('[data-composer-card] textarea')\n        if (!(ta instanceof HTMLTextAreaElement) || ta.disabled) return\n        requestAnimationFrame(function () {\n          if (!ta.isConnected) return\n          ta.focus({ preventScroll: true })\n          ta.setSelectionRange(ta.value.length, ta.value.length)\n        })\n      }\n\n",
+      "replace": "\n      // 会强制滚动页面（视觉上\"卡一下\"）；延迟一帧让卡片关闭动画先完成，\n      // 焦点回归更平滑。\n      function focusComposer() {\n        // PATCH(2026-09-01-lexical): 两种 composer 形态都要能聚焦：老版 <textarea>，新版 Lexical\n        // contenteditable（选择器不带引号值会漏掉 div[contenteditable=\"true\"]）。\n        var ta = document.querySelector('[data-composer-card] textarea')\n          || document.querySelector('[data-composer-card] [contenteditable=\"true\"]')\n        if (!(ta instanceof HTMLElement) || ta.disabled) return\n        requestAnimationFrame(function () {\n          if (!ta.isConnected) return\n          ta.focus({ preventScroll: true })\n          if (ta instanceof HTMLTextAreaElement) {\n            ta.setSelectionRange(ta.value.length, ta.value.length)\n            return\n          }\n          // contenteditable：光标放到文末（Lexical 会接管后续输入）\n          try {\n            var sel = window.getSelection()\n            var range = document.createRange()\n            range.selectNodeContents(ta)\n            range.collapse(false)\n            sel.removeAllRanges()\n            sel.addRange(range)\n          } catch (_) { /* 光标定位失败不影响聚焦 */ }\n        })\n      }\n\n"
+    },
+    {
+      "id": "op25-lexical-chip-resize",
+      "group": "p0901-lexical-compat",
+      "description": "PATCH(2026-09-01-lexical)：chip ResizeObserver 观察 textarea 或 contenteditable 输入面",
+      "find": "\n          // 可能收不到变化；一并观察这两个节点，兼容不同 DSH snapshot。\n          var inputScroll = card.querySelector('[data-input-scroll]')\n          if (inputScroll !== null) chipResizeObserver.observe(inputScroll)\n          var textarea = card.querySelector('textarea')\n          if (textarea !== null) chipResizeObserver.observe(textarea)\n        }\n      }\n\n",
+      "replace": "\n          // 可能收不到变化；一并观察这两个节点，兼容不同 DSH snapshot。\n          var inputScroll = card.querySelector('[data-input-scroll]')\n          if (inputScroll !== null) chipResizeObserver.observe(inputScroll)\n          // PATCH(2026-09-01-lexical): 输入面是 textarea 或 contenteditable，两者都观察\n          var inputBox = card.querySelector('textarea')\n            || card.querySelector('[contenteditable=\"true\"]')\n          if (inputBox !== null) chipResizeObserver.observe(inputBox)\n        }\n      }\n\n"
+    },
+    {
+      "id": "op26-flow-observer",
+      "group": "p0827-flow-observer",
+      "description": "补录 6c6dd18（2026-08-27）漏记改动：会话切换清空 pendingDeco / MutationObserver 收敛到消息流根节点 / 装饰轮询改有界 setTimeout（hunk 5）",
+      "find": "\n        }\n      }\n\n      var decoTimer = null\n      function kickDecorate() {\n        decorateAll()\n        if (decoTimer === null) decoTimer = setInterval(decorateAll, 1000)\n      }\n\n      // ---------- locale 服务（zh/en）订阅与实时回流 ----------\n",
+      "replace": "\n        }\n      }\n\n      // 发送/初次挂载后做一个最多 5 秒的有界兜底轮询；正常更新由消息流\n      // MutationObserver 驱动。这样仍覆盖异步 hydration，同时不再永久每秒全量扫描。\n      var decoTimer = null\n      var decoDeadline = 0\n      function scheduleDecoratePoll() {\n        if (decoTimer !== null) return\n        decoTimer = setTimeout(function tickDecorate() {\n          decoTimer = null\n          decorateAll()\n          if (Date.now() < decoDeadline) {\n            decoTimer = setTimeout(tickDecorate, 500)\n          }\n        }, 250)\n      }\n      function kickDecorate() {\n        decorateAll()\n        decoDeadline = Date.now() + 5000\n        scheduleDecoratePoll()\n      }\n\n      // ---------- locale 服务（zh/en）订阅与实时回流 ----------\n"
+    },
+    {
+      "id": "op27-flow-observer",
+      "group": "p0827-flow-observer",
+      "description": "补录 6c6dd18（2026-08-27）漏记改动：会话切换清空 pendingDeco / MutationObserver 收敛到消息流根节点 / 装饰轮询改有界 setTimeout（hunk 6）",
+      "find": "\n        lastSessionId = cur\n        if (ui.mode !== 'closed') closeToolbar()\n        ui.quotes = []\n        annotationAttached = false\n        ui.noteDraft = ''\n        tipLayer.textContent = ''\n",
+      "replace": "\n        lastSessionId = cur\n        if (ui.mode !== 'closed') closeToolbar()\n        ui.quotes = []\n        // pendingDeco 属于上一会话的发送暂存；跨会话保留会把 hover 数据\n        // 贴到新会话最新一条用户消息上。\n        pendingDeco = []\n        annotationAttached = false\n        ui.noteDraft = ''\n        tipLayer.textContent = ''\n"
+    },
+    {
+      "id": "op28-flow-observer",
+      "group": "p0827-flow-observer",
+      "description": "补录 6c6dd18（2026-08-27）漏记改动：会话切换清空 pendingDeco / MutationObserver 收敛到消息流根节点 / 装饰轮询改有界 setTimeout（hunk 7）",
+      "find": "\n        chipComposerCard = null\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n        if (typeof unsub === 'function') unsub()\n        if (typeof inputUnsub === 'function') inputUnsub()\n        if (typeof localeUnsub === 'function') localeUnsub()\n        if (decoTimer !== null) { clearInterval(decoTimer); decoTimer = null }\n        chipLayer.remove()\n        tipLayer.remove()\n        host.remove()\n",
+      "replace": "\n        chipComposerCard = null\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n        rootObserver.disconnect()\n        observerTarget = null\n        if (typeof unsub === 'function') unsub()\n        if (typeof inputUnsub === 'function') inputUnsub()\n        if (typeof localeUnsub === 'function') localeUnsub()\n        if (decoTimer !== null) { clearTimeout(decoTimer); decoTimer = null }\n        decoDeadline = 0\n        chipLayer.remove()\n        tipLayer.remove()\n        host.remove()\n"
     }
   ],
-  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配（i18n 工具条、提交链路、updateChip、导出尾部、合成事件签名）"
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配；2026-09-01 补录 p0827-flow-observer（6c6dd18 漏记）+ 追加 p0901-lexical-compat（DSH composer Lexical 化兼容）"
 }

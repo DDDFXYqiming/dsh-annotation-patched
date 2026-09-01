@@ -45,6 +45,8 @@ function loadClient(window) {
     window,
     document: window.document,
     Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    HTMLTextAreaElement: window.HTMLTextAreaElement,
     NodeFilter: window.NodeFilter,
     MutationObserver: window.MutationObserver,
     ResizeObserver: typeof window.ResizeObserver === 'function' ? window.ResizeObserver : undefined,
@@ -80,7 +82,9 @@ function loadClient(window) {
   return { loadId, exported }
 }
 
-function makeCtx() {
+/** @param {string[]} [drafts] 收集 setDraft 写入的草稿，供断言 */
+function makeCtx(drafts) {
+  const sink = Array.isArray(drafts) ? drafts : []
   return {
     sessions: {
       list: {
@@ -97,7 +101,7 @@ function makeCtx() {
               getSnapshot() { return { draft: '' } },
               subscribe() { return () => {} },
             },
-            setDraft() {},
+            setDraft(text) { sink.push(text) },
           }
         },
       },
@@ -144,6 +148,91 @@ test('session changes clear pending decoration and polling is bounded', () => {
   assert.match(source, /decoDeadline = Date\.now\(\) \+ 5000/)
   assert.match(source, /rootObserver\.observe\(document\.body, \{ childList: true, subtree: true \}\)/)
   assert.doesNotMatch(source, /observer\.observe\(document\.body/)
+})
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 走一遍真实交互链：选区 → 工具条「引用」→ 保存 → 在 composer 上按回车。
+ * 返回 setDraft 收到的草稿列表（长度 1 = 引用块成功随消息拼稿）。
+ * @param {Document} doc @param {any} window @param {string} composerHtml 输入面节点
+ */
+async function collectDraftsOnEnter(doc, window, composerHtml) {
+  doc.body.innerHTML = [
+    '<div data-chat-flow>',
+    '  <div data-chat-flow-kind="assistant-step" data-chat-anchor-key="a1">',
+    '    <span id="src">quoted passage</span>',
+    '  </div>',
+    '</div>',
+    '<div data-composer-card><div data-input-scroll>' + composerHtml + '</div></div>',
+  ].join('')
+  // jsdom 无布局引擎：rect 全 0 会被「选区不可见」判定挡掉工具条
+  const rect = () => ({
+    x: 10, y: 10, top: 10, left: 10, bottom: 30, right: 120, width: 110, height: 20,
+  })
+  window.Element.prototype.getBoundingClientRect = rect
+  window.Range.prototype.getBoundingClientRect = rect
+  const rects = () => {
+    const list = [rect()]
+    list.item = (i) => list[i]
+    return list
+  }
+  window.Range.prototype.getClientRects = rects
+  const range = doc.createRange()
+  range.selectNodeContents(doc.getElementById('src'))
+  const sel = {
+    isCollapsed: false, rangeCount: 1,
+    getRangeAt: () => range,
+    toString: () => 'quoted passage',
+    removeAllRanges() {}, addRange() {},
+  }
+  window.getSelection = () => sel
+
+  const drafts = []
+  const { exported } = loadClient(window)
+  const cleanup = exported.apply(makeCtx(drafts))
+  try {
+    doc.dispatchEvent(new window.Event('selectionchange'))
+    await wait(320)            // settle 定时器 250ms
+    const quote = doc.querySelector('.dsh-ann-bar button')
+    assert.ok(quote !== null, '选区工具条未出现')
+    quote.click()              // 进入编辑
+    await wait(0)
+    doc.querySelector('.dsh-ann-action').click()   // 保存引用
+    await wait(0)
+    const editor = doc.querySelector('[data-composer-card] textarea, [data-composer-card] [contenteditable="true"]')
+    editor.dispatchEvent(new window.KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    }))
+    await wait(0)
+    return drafts
+  } finally {
+    cleanup()
+  }
+}
+
+test('Enter attaches the block on a Lexical contenteditable composer', async () => {
+  const dom = createDom()
+  try {
+    const drafts = await collectDraftsOnEnter(
+      dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>')
+    assert.equal(drafts.length, 1, '新 composer（contenteditable）回车必须拼入引用块')
+    assert.match(drafts[0], /quoted passage/)
+    assert.match(drafts[0], /提问：/)
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('Enter attaches the block on a legacy textarea composer (backward compat)', async () => {
+  const dom = createDom()
+  try {
+    const drafts = await collectDraftsOnEnter(dom.window.document, dom.window, '<textarea></textarea>')
+    assert.equal(drafts.length, 1, '老 composer（textarea）回车仍须拼入引用块')
+    assert.match(drafts[0], /quoted passage/)
+  } finally {
+    dom.window.close()
+  }
 })
 
 test('node half exports plugin identity', async () => {
