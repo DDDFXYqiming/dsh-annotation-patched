@@ -2,7 +2,7 @@
 
 # dsh-annotation-patched
 
-DSH Web「选中引用」插件的本地增强版（fork 维护，v0.2.0）。包名已改为独立 fork 包名 `@dsh-external/dsh-annotation-patched`，发出去不会和上游的发布撞名。
+DSH Web「选中引用」插件的本地增强版（fork 维护，v0.2.1）。包名已改为独立 fork 包名 `@dsh-external/dsh-annotation-patched`，发出去不会和上游的发布撞名。
 
 插件做的事很具体。你在 DSH Web 里选中助手消息中的文字，点「引用」，想补一句说明就写上，不想写就留空，然后回车发送。引用块会拼进你的消息一起发出去，模型按编号逐条回应每条引用，回应里带有可以悬停展开的引用标记。
 
@@ -29,7 +29,7 @@ DSH Web「选中引用」插件的本地增强版（fork 维护，v0.2.0）。�
 ### 4. 维护性
 
 - 所有改动都带 `PATCH(2026-08-14)` 到 `PATCH(2026-08-17)` 的注释标记，上游更新时能快速定位 diff 重新套用
-- 补丁重放工具（v0.2.0 起）由 `scripts/apply-patches.mjs` 和 `patches/manifest.json` 组成，流程是取干净上游产物，做全局术语改名（批注→引用）和包名替换，再逐条重放 21 条锚定 op。每条锚文本必须恰好命中 1 次，失配就报错并列出适配指引
+- 补丁重放工具（v0.2.0 起）由 `scripts/apply-patches.mjs` 和 `patches/manifest.json` 组成，流程是取干净上游产物，做全局术语改名（批注→引用）和包名替换，再逐条重放 29 条锚定 op。每条锚文本必须恰好命中 1 次，失配就报错并列出适配指引
 - 调试日志 `[annotation] 引用块已拼入草稿…` 和拼稿日志（带发送条数）都能在 DevTools Console 里看到
 
 ## 安装

@@ -2,7 +2,7 @@
 
 # dsh-annotation-patched
 
-A locally enhanced fork of the DSH Web "select-and-quote" plugin, maintained at v0.2.0. The package carries the independent fork name `@dsh-external/dsh-annotation-patched` so its releases never collide with upstream ones.
+A locally enhanced fork of the DSH Web "select-and-quote" plugin, maintained at v0.2.1. The package carries the independent fork name `@dsh-external/dsh-annotation-patched` so its releases never collide with upstream ones.
 
 The plugin does one concrete thing. You select text inside an assistant message in DSH Web, click "**引用**", optionally add a note (or leave it empty), and press Enter. The quote block is composed into your message and sent along with it. The model answers each quote by number, and the replies carry quote chips that expand on hover.
 
@@ -29,7 +29,7 @@ The `引用 ×N` label lives in its own `position: fixed` layer and used to be p
 ### 4. Maintainability
 
 - Every change carries a `PATCH(2026-08-14)` through `PATCH(2026-08-17)` comment marker, so upstream updates can be diffed and re-applied quickly
-- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 21 anchored ops one by one. Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
+- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 29 anchored ops one by one. Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
 - Debug logs such as `[annotation] 引用块已拼入草稿…` and compose logs (with send counts) show up in the DevTools console
 
 ## Install
