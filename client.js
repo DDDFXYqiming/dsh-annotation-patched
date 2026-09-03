@@ -1596,6 +1596,12 @@ window.__ModuleLoader__.load({
       chipLayer.setAttribute('data-annotation-chip', '')
       chipLayer.style.cssText = 'position:fixed;z-index:1150;display:none;align-items:center;gap:4px;height:22px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:11px;color:var(--dsw-alias-label-primary);cursor:default;animation:dsh-ann-pop .12s var(--ds-ease-in-out, ease);'
       document.body.appendChild(chipLayer)
+      // PATCH(2026-09-03): 悬浮卡右边溢出修复说明——三处 tip（showChipTip /
+      // 气泡「引用 ×N」标签 / 回复「Annotation N」芯片）都 append 到这个
+      // body 直下的 tipLayer；它不带 [data-annotation-for-dsh]，不继承
+      // border-box，content-box 下 padding+border 让实际宽比标称大 26px，
+      // 钳位按标称宽算 → 宽布局气泡贴右缘时卡片溢出屏幕右侧被裁。
+      // 对策：cssText 补 box-sizing:border-box + 钳位用 offsetWidth 实测。
       var tipLayer = document.createElement('div')
       tipLayer.setAttribute('data-annotation-tip-layer', '')
       document.body.appendChild(tipLayer)
@@ -1694,7 +1700,7 @@ window.__ModuleLoader__.load({
         tipLayer.textContent = ''
         var el = document.createElement('div')
         el.className = 'dsh-ann-tip'
-        el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+        el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
         var head = document.createElement('div')
         head.style.cssText = 'font-weight:600;margin-bottom:6px;'
         head.textContent = t('tip.title', { n: ui.quotes.length })
@@ -1732,7 +1738,7 @@ window.__ModuleLoader__.load({
         }
         tipLayer.appendChild(el)
         var r2 = chipLayer.getBoundingClientRect()
-        var w2 = 300
+        var w2 = el.offsetWidth || 300
         var h2 = el.offsetHeight || 120
         var left = Math.max(8, Math.min(r2.left, window.innerWidth - w2 - 8))
         var top = r2.top - h2 - 6
@@ -1877,7 +1883,7 @@ window.__ModuleLoader__.load({
             tipLayer.textContent = ''
             var el = document.createElement('div')
             el.className = 'dsh-ann-tip'
-            el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+            el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
             var head = document.createElement('div')
             head.style.cssText = 'font-weight:600;margin-bottom:6px;'
             head.textContent = t('bubble.title', { n: list.length })
@@ -1903,7 +1909,7 @@ window.__ModuleLoader__.load({
             }
             tipLayer.appendChild(el)
             var r2 = tag.getBoundingClientRect()
-            var w2 = 300
+            var w2 = el.offsetWidth || 300
             var h2 = el.offsetHeight || 120
             var left = Math.max(8, Math.min(r2.left, window.innerWidth - w2 - 8))
             var top = r2.bottom + 6
@@ -2038,7 +2044,7 @@ window.__ModuleLoader__.load({
           tipLayer.textContent = ''
           var el = document.createElement('div')
           el.className = 'dsh-ann-tip'
-          el.style.cssText = 'position:fixed;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+          el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
           var head = document.createElement('div')
           head.style.cssText = 'font-weight:600;margin-bottom:6px;'
           head.textContent = item !== undefined ? t('reply.headWithQuote', { n: num }) : t('reply.headNoQuote', { n: num })
@@ -2062,7 +2068,7 @@ window.__ModuleLoader__.load({
           }
           tipLayer.appendChild(el)
           var r2 = chip.getBoundingClientRect()
-          var w2 = 320
+          var w2 = el.offsetWidth || 320
           var h2 = el.offsetHeight || 100
           var left = Math.max(8, Math.min(r2.left, window.innerWidth - w2 - 8))
           var top = r2.bottom + 6

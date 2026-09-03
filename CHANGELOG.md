@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2] - 2026-09-03
+
+### 修复（宽布局悬浮卡右边溢出）
+- DSH web 中列可拉伸到很宽后，右对齐的用户气泡贴住屏幕右缘；hover「引用 ×N」标签 /「Annotation N」芯片 / 输入框旁引用标签时，展开卡片右侧溢出屏幕被裁。
+- 根因：三处 tip 卡片 append 到 body 直下的 tipLayer，不带 `[data-annotation-for-dsh]`，不继承 border-box——content-box 下 `width:300/320px` + padding 24px + border 2px，实际外框比标称宽 26px，而水平钳位按标称宽算。
+- 修复：tip cssText 补 `box-sizing:border-box`（×3），钳位改用实测外框宽 `el.offsetWidth`（×3，双保险）。patches/manifest.json 追加组 `p0903-tip-clamp` 共 7 op（ops 29 → 36），fd24ef92 基座全量重放 `--expect client.js` 字节级一致 ✓。
+
 ## [0.2.1] - 2026-09-01
 
 ### 修复（宿主 composer Lexical 化）

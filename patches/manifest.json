@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 29,
-  "verifiedAgainst": "2026-09-01 全量重放字节校验通过：fd24ef92 基座 + terminology + 29 ops == client.js；node --check + jsdom 测试 6/6（含 contenteditable / textarea 双 composer 回归）",
+  "opsCount": 36,
+  "verifiedAgainst": "2026-09-03 全量重放字节校验通过：fd24ef92 基座 + terminology + 36 ops == client.js；宽布局悬浮卡右边溢出修复（组 p0903-tip-clamp）",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -224,6 +224,55 @@
       "description": "补录 6c6dd18（2026-08-27）漏记改动：会话切换清空 pendingDeco / MutationObserver 收敛到消息流根节点 / 装饰轮询改有界 setTimeout（hunk 7）",
       "find": "\n        chipComposerCard = null\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n        if (typeof unsub === 'function') unsub()\n        if (typeof inputUnsub === 'function') inputUnsub()\n        if (typeof localeUnsub === 'function') localeUnsub()\n        if (decoTimer !== null) { clearInterval(decoTimer); decoTimer = null }\n        chipLayer.remove()\n        tipLayer.remove()\n        host.remove()\n",
       "replace": "\n        chipComposerCard = null\n        host.removeEventListener('pointerdown', onHostPointerDown)\n        observer.disconnect()\n        rootObserver.disconnect()\n        observerTarget = null\n        if (typeof unsub === 'function') unsub()\n        if (typeof inputUnsub === 'function') inputUnsub()\n        if (typeof localeUnsub === 'function') localeUnsub()\n        if (decoTimer !== null) { clearTimeout(decoTimer); decoTimer = null }\n        decoDeadline = 0\n        chipLayer.remove()\n        tipLayer.remove()\n        host.remove()\n"
+    },
+    {
+      "id": "op29-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出（根因）：showChipTip 卡片 cssText 加 box-sizing:border-box（tipLayer 在 body 下不带 [data-annotation-for-dsh]，默认 content-box，padding+border 使实际宽=标称+26px，钳位按标称算致右侧溢出）",
+      "find": "\n        el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;",
+      "replace": "\n        el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;"
+    },
+    {
+      "id": "op30-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：气泡「引用 ×N」标签 tip cssText 加 box-sizing:border-box（同 op29 根因，12 空格缩进区分）",
+      "find": "\n            el.style.cssText = 'position:fixed;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;",
+      "replace": "\n            el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;"
+    },
+    {
+      "id": "op31-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：回复「Annotation N」芯片 tip（width:320px）cssText 加 box-sizing:border-box",
+      "find": "\n          el.style.cssText = 'position:fixed;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;",
+      "replace": "\n          el.style.cssText = 'position:fixed;box-sizing:border-box;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;"
+    },
+    {
+      "id": "op32-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：showChipTip 水平钳位改用实测外框宽 el.offsetWidth（任何盒模型下算术都对，双保险）",
+      "find": "\n        var r2 = chipLayer.getBoundingClientRect()\n        var w2 = 300\n",
+      "replace": "\n        var r2 = chipLayer.getBoundingClientRect()\n        var w2 = el.offsetWidth || 300\n"
+    },
+    {
+      "id": "op33-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：气泡标签 tip 水平钳位改用 el.offsetWidth",
+      "find": "\n            var r2 = tag.getBoundingClientRect()\n            var w2 = 300\n",
+      "replace": "\n            var r2 = tag.getBoundingClientRect()\n            var w2 = el.offsetWidth || 300\n"
+    },
+    {
+      "id": "op34-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：回复芯片 tip 水平钳位改用 el.offsetWidth",
+      "find": "\n          var r2 = chip.getBoundingClientRect()\n          var w2 = 320\n",
+      "replace": "\n          var r2 = chip.getBoundingClientRect()\n          var w2 = el.offsetWidth || 320\n"
+    },
+    {
+      "id": "op35-p0903-tip-clamp",
+      "group": "p0903-tip-clamp",
+      "description": "P0903 悬浮卡右边溢出：tipLayer 创建处补根因注释（三处 tip 定位共用说明）",
+      "find": "\n      var tipLayer = document.createElement('div')\n",
+      "replace": "\n      // PATCH(2026-09-03): 悬浮卡右边溢出修复说明——三处 tip（showChipTip /\n      // 气泡「引用 ×N」标签 / 回复「Annotation N」芯片）都 append 到这个\n      // body 直下的 tipLayer；它不带 [data-annotation-for-dsh]，不继承\n      // border-box，content-box 下 padding+border 让实际宽比标称大 26px，\n      // 钳位按标称宽算 → 宽布局气泡贴右缘时卡片溢出屏幕右侧被裁。\n      // 对策：cssText 补 box-sizing:border-box + 钳位用 offsetWidth 实测。\n      var tipLayer = document.createElement('div')\n"
     }
   ],
   "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配；2026-09-01 补录 p0827-flow-observer（6c6dd18 漏记）+ 追加 p0901-lexical-compat（DSH composer Lexical 化兼容）"
