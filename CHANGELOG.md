@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3] - 2026-09-05
+
+### 兼容（旧模型服务内联思考）
+- 一些旧模型服务没有独立 reasoning 通道，把思考过程以 think / thinking / thought 标签块直接写进正文，宿主按普通文本渲染：助手回复里出现大段独白，且独白中若出现「Annotation N：」会被误替换成芯片。
+- 修复：`decorateAssistantAnnotations` 在停流守卫后先跑 `stripInlineThink`（文本节点级块剥离，块被 markdown 拆成多节点时状态机跨节点续接），再走芯片逻辑。patches/manifest.json 追加组 `p0905-strip-think` 共 2 op（ops 36 → 38），fd24ef92 基座全量重放通过。
+- 测试：`test/client-load.test.mjs` 新增 jsdom 回归（跨节点块剥离 + 独白内假 Annotation 不成芯片）。7/7 通过。
+
 ## [0.2.2] - 2026-09-03
 
 ### 修复（宽布局悬浮卡右边溢出）

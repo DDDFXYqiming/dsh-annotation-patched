@@ -240,3 +240,32 @@ test('node half exports plugin identity', async () => {
   assert.equal(mod.default.name, pkg.name)
   assert.equal(typeof mod.default.apply, 'function')
 })
+
+// 旧模型服务把思考过程内联进正文（标签用 charCode 拼：agent 工具链会吞标签字面量）。
+test('inline think blocks are stripped from assistant rows before chip decoration', () => {
+  const dom = createDom()
+  try {
+    const { exported } = loadClient(dom.window)
+    const doc = dom.window.document
+    const T = String.fromCharCode(60) + 'think' + String.fromCharCode(62)
+    const TE = String.fromCharCode(60) + '/think' + String.fromCharCode(62)
+    const row = doc.createElement('div')
+    row.setAttribute('data-time-hover-root', '')
+    const p = doc.createElement('p')
+    // 块跨两个文本节点：状态机必须续接；think 独白里的「Annotation 1:」不得变芯片
+    const a = doc.createTextNode(T + 'The user wants a recap. Annotation 1: poisoned inside ')
+    const b = doc.createTextNode('think.' + TE + 'Annotation 1: real answer.')
+    p.appendChild(a)
+    p.appendChild(b)
+    row.appendChild(p)
+    doc.body.appendChild(row)
+    exported.apply(makeCtx()) // kickDecorate → decorateAll 同步执行
+    assert.ok(!row.textContent.includes('poisoned inside'), 'think content removed')
+    assert.ok(!row.textContent.includes(T) && !row.textContent.includes(TE), 'think tags removed')
+    assert.ok(row.textContent.includes('real answer'), 'answer kept')
+    const chips = row.querySelectorAll('[data-annotation-reply-chip]')
+    assert.equal(chips.length, 1, 'only the real Annotation 1 becomes a chip')
+  } finally {
+    dom.window.close()
+  }
+})

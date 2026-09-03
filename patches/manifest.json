@@ -14,7 +14,7 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 36,
+  "opsCount": 38,
   "verifiedAgainst": "2026-09-03 全量重放字节校验通过：fd24ef92 基座 + terminology + 36 ops == client.js；宽布局悬浮卡右边溢出修复（组 p0903-tip-clamp）",
   "ops": [
     {
@@ -273,7 +273,21 @@
       "description": "P0903 悬浮卡右边溢出：tipLayer 创建处补根因注释（三处 tip 定位共用说明）",
       "find": "\n      var tipLayer = document.createElement('div')\n",
       "replace": "\n      // PATCH(2026-09-03): 悬浮卡右边溢出修复说明——三处 tip（showChipTip /\n      // 气泡「引用 ×N」标签 / 回复「Annotation N」芯片）都 append 到这个\n      // body 直下的 tipLayer；它不带 [data-annotation-for-dsh]，不继承\n      // border-box，content-box 下 padding+border 让实际宽比标称大 26px，\n      // 钳位按标称宽算 → 宽布局气泡贴右缘时卡片溢出屏幕右侧被裁。\n      // 对策：cssText 补 box-sizing:border-box + 钳位用 offsetWidth 实测。\n      var tipLayer = document.createElement('div')\n"
+    },
+    {
+      "id": "op36-p0905-strip-think",
+      "group": "p0905-strip-think",
+      "description": "旧服务内联 think 兼容：定义 stripInlineThink（文本节点级 think/thinking/thought 块剥离，跨节点状态机）",
+      "find": "      /** 扫描所有已结束流式输出的助手行：把「Annotation N：」替换为可悬浮芯片。 */",
+      "replace": "      /** PATCH(2026-09-05): 旧模型服务把思考过程以 think / thinking /\n       *  thought 标签块内联进正文（没有独立 reasoning 通道），宿主按普通\n       *  文本渲染——用户看到大段独白，芯片替换还可能误命中独白里的\n       *  「Annotation N：」。停流后先把这些块从助手行文本节点剥掉；块被\n       *  markdown 拆成多个文本节点时，用状态机跨节点续接。\n       *  ponytail: 只认文本节点里的标签原文；若宿主渲染层把标签当 HTML\n       *  吞掉、只剩独白文字，则无从识别（属宿主渲染层问题）。 */\n      var THINK_OPEN_RE = /<\\s*(?:think(?:ing)?|thought|reasoning)\\s*>/i\n      var THINK_CLOSE_RE = /<\\s*\\/\\s*(?:think(?:ing)?|thought|reasoning)\\s*>/i\n      var THINK_BLOCK_RE = /<\\s*(?:think(?:ing)?|thought|reasoning)\\s*>[\\s\\S]*?<\\s*\\/\\s*(?:think(?:ing)?|thought|reasoning)\\s*>/gi\n      function stripInlineThink(row) {\n        var nodes = []\n        var walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT)\n        var n\n        while ((n = walker.nextNode()) !== null) nodes.push(n)\n        var inside = false\n        for (var i = 0; i < nodes.length; i++) {\n          n = nodes[i]\n          if (n.parentNode === null) continue\n          var v = n.nodeValue || ''\n          if (v === '') continue\n          if (!inside && v.indexOf('<') === -1) continue\n          THINK_BLOCK_RE.lastIndex = 0\n          var out = v.replace(THINK_BLOCK_RE, '')\n          if (!inside) {\n            var om = out.match(THINK_OPEN_RE)\n            if (om !== null) { out = out.slice(0, om.index); inside = true }\n          } else {\n            var cm = out.match(THINK_CLOSE_RE)\n            if (cm === null) out = ''\n            else { out = out.slice(cm.index + cm[0].length); inside = false }\n          }\n          if (out !== v) n.nodeValue = out\n        }\n      }\n\n      /** 扫描所有已结束流式输出的助手行：把「Annotation N：」替换为可悬浮芯片。 */"
+    },
+    {
+      "id": "op37-p0905-strip-think",
+      "group": "p0905-strip-think",
+      "description": "旧服务内联 think 兼容：decorateAssistantAnnotations 停流守卫后先剥 think 块，再走芯片逻辑",
+      "find": "          if (el.hasAttribute('data-streaming') || el.querySelector('[data-streaming]') !== null) continue\n          if (el.querySelector('[data-annotation-reply-chip]') !== null) continue",
+      "replace": "          if (el.hasAttribute('data-streaming') || el.querySelector('[data-streaming]') !== null) continue\n          stripInlineThink(el) // PATCH(2026-09-05): 先剥内联 think 块，再做芯片替换\n          if (el.querySelector('[data-annotation-reply-chip]') !== null) continue"
     }
   ],
-  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配；2026-09-01 补录 p0827-flow-observer（6c6dd18 漏记）+ 追加 p0901-lexical-compat（DSH composer Lexical 化兼容）"
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92：5 处锚点适配；2026-09-01 补录 p0827-flow-observer（6c6dd18 漏记）+ 追加 p0901-lexical-compat（DSH composer Lexical 化兼容）；2026-09-05 追加 p0905-strip-think（旧模型服务内联 think 块剥离，2 op）"
 }

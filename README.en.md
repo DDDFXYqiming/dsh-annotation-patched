@@ -26,10 +26,14 @@ Upstream clears the pending-send quote set `quotes` only inside the `decorateAll
 
 The `引用 ×N` label lives in its own `position: fixed` layer and used to be positioned only when the quote count changed. Once the composer grew for multi-line input, the label stayed at its old coordinates and ended up inside the input box. Since `PATCH(2026-08-17)` the label position is kept in sync through `ResizeObserver`, input events, and composer-replace detection, so it sits above the input even on multi-line drafts.
 
-### 4. Maintainability
+### 4. Inline think-block stripping for legacy model services (v0.2.3)
 
-- Every change carries a `PATCH(2026-08-14)` through `PATCH(2026-08-17)` comment marker, so upstream updates can be diffed and re-applied quickly
-- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 29 anchored ops one by one. Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
+Legacy model services without a separate reasoning channel write chain-of-thought straight into the text as think / thinking / thought tag blocks. Since `PATCH(2026-09-05)` these blocks are stripped from the assistant row's text nodes once streaming stops (a state machine carries over blocks split across nodes by the markdown renderer), and an "Annotation N:" mentioned inside the monologue no longer turns into a chip.
+
+### 5. Maintainability
+
+- Every change carries a `PATCH(2026-08-14)` through `PATCH(2026-09-05)` comment marker, so upstream updates can be diffed and re-applied quickly
+- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 38 anchored ops one by one. Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
 - Debug logs such as `[annotation] 引用块已拼入草稿…` and compose logs (with send counts) show up in the DevTools console
 
 ## Install

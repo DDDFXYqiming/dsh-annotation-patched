@@ -1964,6 +1964,42 @@ window.__ModuleLoader__.load({
         console.warn('[annotation] ' + msg, row)
       }
 
+      /** PATCH(2026-09-05): 旧模型服务把思考过程以 think / thinking /
+       *  thought 标签块内联进正文（没有独立 reasoning 通道），宿主按普通
+       *  文本渲染——用户看到大段独白，芯片替换还可能误命中独白里的
+       *  「Annotation N：」。停流后先把这些块从助手行文本节点剥掉；块被
+       *  markdown 拆成多个文本节点时，用状态机跨节点续接。
+       *  ponytail: 只认文本节点里的标签原文；若宿主渲染层把标签当 HTML
+       *  吞掉、只剩独白文字，则无从识别（属宿主渲染层问题）。 */
+      var THINK_OPEN_RE = /<\s*(?:think(?:ing)?|thought|reasoning)\s*>/i
+      var THINK_CLOSE_RE = /<\s*\/\s*(?:think(?:ing)?|thought|reasoning)\s*>/i
+      var THINK_BLOCK_RE = /<\s*(?:think(?:ing)?|thought|reasoning)\s*>[\s\S]*?<\s*\/\s*(?:think(?:ing)?|thought|reasoning)\s*>/gi
+      function stripInlineThink(row) {
+        var nodes = []
+        var walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT)
+        var n
+        while ((n = walker.nextNode()) !== null) nodes.push(n)
+        var inside = false
+        for (var i = 0; i < nodes.length; i++) {
+          n = nodes[i]
+          if (n.parentNode === null) continue
+          var v = n.nodeValue || ''
+          if (v === '') continue
+          if (!inside && v.indexOf('<') === -1) continue
+          THINK_BLOCK_RE.lastIndex = 0
+          var out = v.replace(THINK_BLOCK_RE, '')
+          if (!inside) {
+            var om = out.match(THINK_OPEN_RE)
+            if (om !== null) { out = out.slice(0, om.index); inside = true }
+          } else {
+            var cm = out.match(THINK_CLOSE_RE)
+            if (cm === null) out = ''
+            else { out = out.slice(cm.index + cm[0].length); inside = false }
+          }
+          if (out !== v) n.nodeValue = out
+        }
+      }
+
       /** 扫描所有已结束流式输出的助手行：把「Annotation N：」替换为可悬浮芯片。 */
       function decorateAssistantAnnotations() {
         var rows = assistantRows()
@@ -1975,6 +2011,7 @@ window.__ModuleLoader__.load({
           // 替换成芯片，与 React 正在更新的文本节点冲突，整条回复可能渲染
           // 异常（表现为看不到回复消息）。
           if (el.hasAttribute('data-streaming') || el.querySelector('[data-streaming]') !== null) continue
+          stripInlineThink(el) // PATCH(2026-09-05): 先剥内联 think 块，再做芯片替换
           if (el.querySelector('[data-annotation-reply-chip]') !== null) continue
           if ((el.textContent || '').indexOf('Annotation') === -1) continue
           var items = findPrevAnnotationItems(el)
