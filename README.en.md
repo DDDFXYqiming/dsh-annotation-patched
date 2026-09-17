@@ -2,15 +2,15 @@
 
 # dsh-annotation-patched
 
-A locally enhanced fork of the DSH Web "select-and-quote" plugin, maintained at v0.2.1. The package carries the independent fork name `@dsh-external/dsh-annotation-patched` so its releases never collide with upstream ones.
+A locally enhanced fork of the DSH Web "select-and-quote" plugin, maintained at v0.3.0. The package carries the independent fork name `@dsh-external/dsh-annotation-patched` so its releases never collide with upstream ones.
 
 The plugin does one concrete thing. You select text inside an assistant message in DSH Web, click "**引用**", optionally add a note (or leave it empty), and press Enter. The quote block is composed into your message and sent along with it. The model answers each quote by number, and the replies carry quote chips that expand on hover.
 
-- Upstream lives at [omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation) (MIT). This fork is based on v1.4.1 plus the issue#20 fix, upstream commit fd24ef92 (upgrade replayed 2026-08-21)
+- Upstream lives at [omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation) (MIT; since upstream v1.4.11 the package name is `@changfenhuang/dsh-annotation`). This fork is based on v1.4.11-preview.1, upstream tag `ab594842` (2026-09-15, upstream note "adopted for DSH 0.1.6-alpha.1"; replay migrated 2026-09-17). Historical base: v1.4.1 plus issue#20 = `fd24ef92`
 - This directory is upstream source plus local enhancements. Every change in `client.js` carries a `PATCH(YYYY-MM-DD)` marker, so `grep` finds them all
 - To move to a new base, run `node scripts/apply-patches.mjs --fetch <upstream-commit> --out client.js` and every fork patch replays in one shot from the `patches/manifest.json` manifest
 
-## Enhancements (vs upstream v1.3.13)
+## Enhancements (local customizations, vs upstream v1.4.11-preview.1)
 
 ### 1. Empty quote = quote (single-button mode)
 
@@ -33,7 +33,7 @@ Legacy model services without a separate reasoning channel write chain-of-though
 ### 5. Maintainability
 
 - Every change carries a `PATCH(2026-08-14)` through `PATCH(2026-09-05)` comment marker, so upstream updates can be diffed and re-applied quickly
-- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 38 anchored ops one by one. Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
+- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 34 anchored ops one by one (another 4 are retired because upstream v1.4.11 already covers them, recorded under `retired` in the manifest). Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
 - Debug logs such as `[annotation] 引用块已拼入草稿…` and compose logs (with send counts) show up in the DevTools console
 
 ## Install
@@ -48,12 +48,13 @@ dsh plugin --profile web add <repo dir>
 ## Known limits
 
 - Only **assistant** messages can be selected (user-typed messages are ignored)
-- Auto-quote fires on both **Enter-to-send** and clicking the send button (since `PATCH(2026-08-14d)` the send button is intercepted at the capture stage so the quote is composed in first)
+- Auto-quote fires on both **Enter-to-send** and clicking the send button. Since v0.3.0 the button path is handled by upstream v1.4.11's `onSendPointerDown`/`onSendKeyboardClick` (the fork's own patch for it is retired), and the quote is still composed in first at the capture stage
 - This is a browser-side plugin. Changes to `client.js` need a **Ctrl+F5 hard reload** (or a different browser) to take effect. `pnpm` updates overwrite the copy in `node_modules`, so relink from this directory to re-pin
 - The plugin is tightly coupled to the DSH Web DOM structure (`[data-time-hover-root]`, `[class*="bubble"]`, `[data-composer-card]`, etc.). DSH UI upgrades may break it
 
 ## Upgrade log
 
+- v0.3.0 moved the base from v1.4.1 (fd24ef92) to v1.4.11-preview.1 (ab594842) to adopt DSH 0.1.6's Lexical composer. 11 anchors adapted (package ids, attachAndSend, chip positioning, message-flow observer, Enter guard, dispose) and 4 retired (send-button compose and its dispose cleanup, focusComposer, session-switch pendingDeco clear), all already covered by upstream. Replay is 34/34 with no mismatch and byte-identical, and 7/7 tests pass
 - v0.2.0 moved the base from v1.3.13 to v1.4.1 (plus issue#20) with 5 anchor adaptations. ① The toolbar text is i18n-aware now, it goes through `t()`, and the 可留空 hint moved into the zh/en dictionaries. ② `attachAndSend(e)` changed signature, the click path passes a synthetic event object. ③ `stripOldBlock` got bilingual sentinels, zh uses `提问：` and en uses `Ask:`. ④ The `updateChip` anchor follows `t(chip.count)`. ⑤ The export tail became a single-line anchor. Test assertions followed the inject and locale changes.
 
 ## License

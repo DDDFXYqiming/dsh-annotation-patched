@@ -143,7 +143,9 @@ test('apply returns a disposable cleanup without throwing', () => {
 
 test('session changes clear pending decoration and polling is bounded', () => {
   const source = readFileSync(resolve(root, 'client.js'), 'utf8')
-  assert.match(source, /ui\.quotes = \[\][\s\S]{0,240}pendingDeco = \[\]/)
+  // 上游 v1.4.11 起：会话切换按会话恢复 pendingQuotes，并用 pendingDeco.length = 0
+  // 作废发送暂存（fork 的 pendingDeco = [] 已被上游覆盖，见 manifest.retired）
+  assert.match(source, /ui\.quotes = readPendingQuotes\(cur\)[\s\S]{0,400}pendingDeco\.length = 0/)
   assert.doesNotMatch(source, /setInterval\(decorateAll/)
   assert.match(source, /decoDeadline = Date\.now\(\) \+ 5000/)
   assert.match(source, /rootObserver\.observe\(document\.body, \{ childList: true, subtree: true \}\)/)
@@ -218,7 +220,8 @@ test('Enter attaches the block on a Lexical contenteditable composer', async () 
       dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>')
     assert.equal(drafts.length, 1, '新 composer（contenteditable）回车必须拼入引用块')
     assert.match(drafts[0], /quoted passage/)
-    assert.match(drafts[0], /提问：/)
+    // 上游 v1.4.11 纯引用块走 block.headOnly/formatOnly（无「提问：」分隔标记）
+    assert.match(drafts[0], /我引用了以下/)
   } finally {
     dom.window.close()
   }

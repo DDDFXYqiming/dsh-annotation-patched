@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.0] - 2026-09-17
+
+### 升级（基座迁移到上游 v1.4.11-preview.1，适配 DSH 0.1.6）
+- 宿主 DSH 从 0.1.5-rc.1 升到 0.1.6-alpha.2，composer 换成 Lexical contenteditable；旧基座 fd24ef92（v1.4.1 + issue#20）在 0.1.6 上出现「引用收下但发不出去、chip 常驻输入框」故障。基座迁移到上游 v1.4.11-preview.1（tag ab594842，2026-09-15，上游说明「适配 DSH 0.1.6-alpha.1」）。
+- 上游同期把包名从 `@omdsh-dev/dsh-annotation` 改为 `@changfenhuang/dsh-annotation`（loader id、报错注释、exports.name 三处）。
+- 重放：`node scripts/apply-patches.mjs --fetch v1.4.11-preview.1 --out client.js --expect client.js` → terminology 106 处、34/34 op 应用、0 失配、字节级一致 ✓。`node --check client.js` 过，`npm test` 7/7 过。
+
+### 适配（11 条锚点；只改 find 与紧邻上下文，PATCH 语义与标记不变）
+- op00 / op20 包名 id：上游改名 @changfenhuang，find 的域名前缀随之更新。
+- op13 `attachAndSend`：上游改为 `buildBlock(hasQuestion)` 并把 `annotationAttached` 拆进 `hasAnnotationBlock` 分支；stripOldBlock「剥离后重拼」语义保留，另补剥上游新增的无标记纯引用块（headOnly/formatOnly）。
+- op15 / op16 / op17 chip 定位：上游 updateChip 自带 observedComposer/composerObserver（只观察 card）与视口可见性守卫；fork 的 observeChipComposer 观察 card + `[data-input-scroll]` + 输入面并挂 input 事件，find 吞掉上游重复声明/观察块，保留上游守卫并追加动态测高定位。
+- op21 / op22 消息流 observer：上游回调尾部新增 hasRowInsert/scheduleAssistantDecorate 限流分支；fork 只摘除 op03 注入的 chip 重定位块并注入 rootObserver/bindMessageObserver，上游限流分支原样保留。
+- op23 回车守卫：上游改用 `[data-composer-input]`；fork 的 `isComposerEditor` 是超集（旧 textarea + 新 contenteditable），保留。
+- op25 chip ResizeObserver 输入面：随 op15 恢复锚点后自动命中，无需改锚。
+- op28 dispose：上游新增 inputWatchTimer 清理与 composerObserver.disconnect()；find 纳入前者，replace 用 rootObserver/observerTarget 收尾并移除已不存在的 composerObserver 行。
+
+### 退休（4 条，上游已覆盖；证据与行号见 patches/manifest.json 的 retired）
+- op04 点击发送按钮拼稿：上游新增 submitAttached/sendButtonOf/onSendPointerDown/onSendKeyboardClick（新基座 1226–1266 行），覆盖且更完整（含空草稿禁用按钮的直接提交路径）。
+- op18 随 op04 退休：onDocClickCapture 不再注入，上游 dispose 自行移除自己的 pointerdown/click 监听（新基座 2325–2326 行）。
+- op24 `focusComposer`：上游已改为面向 Lexical contenteditable 的等价实现（新基座 1646–1658 行，`[data-composer-input]` + isContentEditable + Range 折叠到文末）。
+- op27 会话切换清 pendingDeco：上游订阅已自行作废发送暂存（新基座 2305–2307 行 `pendingDeco.length = 0`，并按会话恢复 pendingQuotes）。
+
+### 测试
+- `test/client-load.test.mjs` 按新基座调整两处断言（会话切换改认 `readPendingQuotes(cur)` + `pendingDeco.length = 0`；纯引用块无「提问：」标记，改认 `我引用了以下`），未删测试。7/7 通过。
+
 ## [0.2.3] - 2026-09-05
 
 ### 兼容（旧模型服务内联思考）

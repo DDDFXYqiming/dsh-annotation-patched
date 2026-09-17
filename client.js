@@ -28,8 +28,9 @@
 //   zh 分隔标记用「提问：」而非「问题：」——标题行「回答我的问题：」里也含
 //   它，气泡隐藏手术会误命中）
 //
-// 不依赖发送完成事件链：watchInputDraft 在初始化时会话未加载时会失效，仅作
-// 暂存入口；气泡装饰走 MutationObserver + 轮询。
+// 发送清空只认 watchInputDraft 的「草稿有→空」迁移（未就绪时订阅重试补齐）；
+// 气泡装饰走 MutationObserver + 轮询，只负责隐藏/贴标签，绝不清空待发送引用
+// （历史消息重装饰与刚发送在 DOM 上不可区分，见 decorateAll）。
 //
 // 判别式与 omdsh-dev/navbar 一致：助手行 = [data-time-hover-root] 且不含
 // user bubble（[class*="bubble"]）。
@@ -93,7 +94,7 @@ window.__ModuleLoader__.load({
         '  font-family: var(--dsw-font-family, system-ui);',
         '  animation: dsh-ann-pop .12s var(--ds-ease-in-out, ease); }',
         '.dsh-ann-card-head { display: flex; align-items: center; justify-content: space-between;',
-        '  margin-bottom: 8px; }',
+        '  margin-bottom: 8px; cursor: move; touch-action: none; user-select: none; }',
         '.dsh-ann-card-title { font-size: 13px; font-weight: 600;',
         '  color: var(--dsw-alias-label-primary); }',
         '.dsh-ann-quote { font-size: 12px; line-height: 1.55;',
@@ -155,6 +156,7 @@ window.__ModuleLoader__.load({
         '  box-shadow: 0 1px 4px rgba(0,0,0,.35); pointer-events: auto; cursor: pointer;',
         '  transition: filter .12s ease; }',
         '.dsh-ann-num:hover { filter: brightness(1.15); }',
+        'body:has([role="dialog"][aria-modal="true"]) [data-annotation-overlay] { display: none; }',
         '.dsh-ann-tip { animation: dsh-ann-pop .12s var(--ds-ease-in-out, ease); }',
         '@keyframes dsh-ann-fadein { from { opacity: 0; } to { opacity: 1; } }',
       ].join('\n')
@@ -198,6 +200,8 @@ window.__ModuleLoader__.load({
           head: '我引用了以下 {n} 处内容（编号与原文对应），请针对它们回答我的问题：',
           notePrefix: '引用：',
           format: '请用「Annotation 1：…」到「Annotation {n}：…」的格式，逐条回应上面每一条引用，最后再回答我的问题。',
+          headOnly: '我引用了以下内容，请逐条回应：',
+          formatOnly: '请按「Annotation N：…」的格式，逐条回应以上引用。',
           marker: '提问：',
         },
       },
@@ -233,6 +237,8 @@ window.__ModuleLoader__.load({
           head: 'I annotated the following {n} passage(s) (the numbers match the quotes below); please respond to them when answering my question:',
           notePrefix: 'Note: ',
           format: 'Please respond to each annotation in the format "Annotation 1: …" through "Annotation {n}: …", then answer my question.',
+          headOnly: 'I annotated the following passages; please respond to each annotation:',
+          formatOnly: 'Please respond to each annotation above in the format "Annotation N: …".',
           marker: 'Ask:',
         },
       },
@@ -354,6 +360,57 @@ window.__ModuleLoader__.load({
         el = el.parentElement
       }
       return null
+    }
+
+    // 只接管宿主的可选文本正文；标题、按钮、PDF 和 iframe 不属于此接口。
+    var DOCUMENT_TEXT = '[data-textpreview-plain], [data-document-markdown], [data-code-preview] pre'
+
+    function documentSourceOf(node) {
+      var el = node instanceof Element ? node : node && node.parentElement
+      if (el && el.closest('button, input, textarea, [contenteditable="true"]')) return null
+      var root = el && el.closest(DOCUMENT_TEXT)
+      var preview = root && root.closest('[data-textpreview-url]')
+      if (!preview) return null
+      var url = preview.getAttribute('data-textpreview-url') || ''
+      var match = /^dsh-resource:\/\/file\/session\/([^/]+)\/(.+)$/.exec(url)
+      if (!match) return null
+      try {
+        var sessionId = decodeURIComponent(match[1])
+        var path = match[2].split('/').map(decodeURIComponent).join('/')
+        if (/[\u0000-\u001f\u007f]/.test(path) || /[?#]/.test(url)) return null
+        return { root: root, sourceUrl: url, sourcePath: path, sessionId: sessionId }
+      } catch (_) { return null }
+    }
+
+    function annotationRootOf(node) {
+      var source = documentSourceOf(node)
+      return source !== null ? source.root : assistantRowOf(node)
+    }
+
+    function quoteRects(range, saved) {
+      var rects = Array.from(range.getClientRects())
+      if (!saved.sourceUrl) return rects
+      var clip = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+      var node = range.commonAncestorContainer
+      var el = node instanceof Element ? node : node.parentElement
+      for (; el && el !== document.body; el = el.parentElement) {
+        var style = getComputedStyle(el)
+        var box = el.getBoundingClientRect()
+        if (/auto|scroll|hidden|clip/.test(style.overflowX)) {
+          clip.left = Math.max(clip.left, box.left); clip.right = Math.min(clip.right, box.right)
+        }
+        if (/auto|scroll|hidden|clip/.test(style.overflowY)) {
+          clip.top = Math.max(clip.top, box.top); clip.bottom = Math.min(clip.bottom, box.bottom)
+        }
+      }
+      return rects.map(function (r) {
+        var left = Math.max(r.left, clip.left), top = Math.max(r.top, clip.top)
+        return new DOMRect(left, top, Math.max(0, Math.min(r.right, clip.right) - left), Math.max(0, Math.min(r.bottom, clip.bottom) - top))
+      }).filter(function (r) { return r.width > 0 && r.height > 0 })
+    }
+
+    function quoteWithSource(q) {
+      return q.sourcePath ? '[' + q.sourcePath + ']\n' + q.text : q.text
     }
 
     function assistantRows() {
@@ -577,6 +634,24 @@ window.__ModuleLoader__.load({
 
     /** 定位引用的 Range：消息 seq 锚定优先，空白不敏感重搜兜底。 */
     function locateQuote(quote, saved) {
+      if (saved && saved.sourceUrl) {
+        var bodies = document.querySelectorAll(DOCUMENT_TEXT)
+        for (var d = 0; d < bodies.length; d++) {
+          var source = documentSourceOf(bodies[d])
+          if (source === null || source.sourceUrl !== saved.sourceUrl || bodies[d].getClientRects().length === 0) continue
+          if (saved.range && bodies[d].contains(saved.range.commonAncestorContainer)
+            && saved.range.toString().trim() === quote) return saved.range
+          if (saved.textOffset >= 0) {
+            var exact = rangeFromOffset(bodies[d], saved.textOffset, quote.length)
+            if (exact !== null && exact.toString() === quote) return exact
+          }
+          // 文件变化后只接受唯一匹配，避免标记重复代码中的另一处。
+          var text = bodies[d].textContent || ''
+          var at = text.indexOf(quote)
+          if (at >= 0 && text.indexOf(quote, at + 1) === -1) return rangeFromOffset(bodies[d], at, quote.length)
+        }
+        return null
+      }
       if (saved !== undefined && saved !== null && saved.range && saved.range.startContainer) {
         try {
           if (saved.range.startContainer.isConnected && saved.range.endContainer.isConnected) {
@@ -724,8 +799,18 @@ window.__ModuleLoader__.load({
       var w = 400
       var left = rect.left + rect.width / 2 - w / 2
       left = Math.max(8, Math.min(left, window.innerWidth - w - 8))
-      var top = rect.top - height - 8
-      if (top < 8) top = Math.min(rect.bottom + 8, window.innerHeight - height - 8)
+      // 下方优先：原生选中菜单（移动端长按菜单、桌面 Copy/Search 浮层）锚定在选区
+      // 上沿附近，且原生 UI 恒绘制在页面内容之上（z-index 无效），工具条放上方必被
+      // 遮挡；因此下方放得下就放下方，放不下才回上方。
+      var belowTop = rect.bottom + 8
+      var belowFits = belowTop + height <= window.innerHeight - 8
+      var top
+      if (belowFits) {
+        top = belowTop
+      } else {
+        top = rect.top - height - 8
+        if (top < 8) top = Math.min(rect.bottom + 8, window.innerHeight - height - 8)
+      }
       return { left: Math.round(left), top: Math.round(Math.max(8, top)) }
     }
 
@@ -769,6 +854,56 @@ window.__ModuleLoader__.load({
       },
     }
 
+    var PENDING_STORAGE_PREFIX = 'dsh.annotation.pending.v1.'
+
+    function pendingStorageKey(sessionId) {
+      return PENDING_STORAGE_PREFIX + encodeURIComponent(String(sessionId))
+    }
+
+    function parsePendingQuotes(raw) {
+      if (typeof raw !== 'string' || raw === '') return []
+      try {
+        var value = JSON.parse(raw)
+        if (!Array.isArray(value)) return []
+        return value.filter(function (q) {
+          return q !== null && typeof q === 'object'
+            && typeof q.id === 'string' && typeof q.text === 'string' && q.text !== ''
+        }).map(function (q) {
+          return {
+            id: q.id,
+            text: q.text,
+            note: typeof q.note === 'string' ? q.note : '',
+            ...(typeof q.sourceUrl === 'string' && typeof q.sourcePath === 'string'
+              ? { sourceUrl: q.sourceUrl, sourcePath: q.sourcePath } : {}),
+            range: null,
+            seqKey: typeof q.seqKey === 'string' ? q.seqKey : '',
+            rowHead: typeof q.rowHead === 'string' ? q.rowHead : '',
+            textOffset: Number.isFinite(q.textOffset) ? q.textOffset : -1,
+            ctxBefore: typeof q.ctxBefore === 'string' ? q.ctxBefore : '',
+            ctxAfter: typeof q.ctxAfter === 'string' ? q.ctxAfter : '',
+          }
+        })
+      } catch (_) {
+        return []
+      }
+    }
+
+    function stringifyPendingQuotes(quotes) {
+      return JSON.stringify(quotes.map(function (q) {
+        return {
+          id: q.id,
+          text: q.text,
+          note: q.note || '',
+          ...(q.sourceUrl ? { sourceUrl: q.sourceUrl, sourcePath: q.sourcePath } : {}),
+          seqKey: q.seqKey || '',
+          rowHead: q.rowHead || '',
+          textOffset: Number.isFinite(q.textOffset) ? q.textOffset : -1,
+          ctxBefore: q.ctxBefore || '',
+          ctxAfter: q.ctxAfter || '',
+        }
+      }))
+    }
+
     // ============================== 插件主体 ==============================
     function apply(ctx) {
       var sessions = ctx.sessions
@@ -778,6 +913,7 @@ window.__ModuleLoader__.load({
       document.body.appendChild(host)
       var overlay = document.createElement('div')
       overlay.setAttribute('data-annotation-overlay', '')
+      overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:900;'
       document.body.appendChild(overlay)
 
       var ui = {
@@ -794,6 +930,31 @@ window.__ModuleLoader__.load({
         el: null,
       }
 
+      function readPendingQuotes(sessionId) {
+        if (sessionId === undefined) return []
+        try {
+          return parsePendingQuotes(localStorage.getItem(pendingStorageKey(sessionId)))
+        } catch (err) {
+          console.warn('[annotation] 读取待发送引用失败：', err)
+          return []
+        }
+      }
+
+      function writePendingQuotes(sessionId) {
+        if (sessionId === undefined) return
+        try {
+          var key = pendingStorageKey(sessionId)
+          if (ui.quotes.length === 0) localStorage.removeItem(key)
+          else localStorage.setItem(key, stringifyPendingQuotes(ui.quotes))
+        } catch (err) {
+          console.warn('[annotation] 保存待发送引用失败：', err)
+        }
+      }
+
+      function writeCurrentPendingQuotes() {
+        writePendingQuotes(sessions.list.getSnapshot().current)
+      }
+
       var ignoreUntil = 0
       var settleTimer = null
 
@@ -804,8 +965,10 @@ window.__ModuleLoader__.load({
       // 延迟清 latch 与 InputBar 一致（略放宽到 50ms，兼容第三方输入法时序）。
       var imeComposing = false
       var imeClearTimer = null
+      var imeTouchedAt = 0
       function markImeComposing() {
         imeComposing = true
+        imeTouchedAt = Date.now()
         if (imeClearTimer !== null) {
           clearTimeout(imeClearTimer)
           imeClearTimer = null
@@ -820,7 +983,16 @@ window.__ModuleLoader__.load({
       }
       /** @param {KeyboardEvent} e */
       function isImeKeyBlocked(e) {
-        return imeComposing || e.isComposing === true || e.keyCode === 229
+        if (e.isComposing === true || e.keyCode === 229) {
+          imeTouchedAt = Date.now()
+          return true
+        }
+        // compositionend 偶尔会丢失。只在浏览器已明确报告「非合成」且 latch
+        // 1.2 秒没有活动时复位，避免一次异常把之后所有 Enter 永久锁死。
+        if (imeComposing && imeClearTimer === null && Date.now() - imeTouchedAt >= 1200) {
+          imeComposing = false
+        }
+        return imeComposing
       }
       document.addEventListener('compositionstart', markImeComposing, true)
       document.addEventListener('compositionend', markImeEnded, true)
@@ -880,9 +1052,12 @@ window.__ModuleLoader__.load({
         var text = sel.toString().trim()
         if (text.length === 0) { clearSettle(); return }
         var key = selectionKey(sel)
-        if (ui.mode === 'actions' && key === ui.lastKey) { clearSettle(); return }
-        var rootEl = assistantRowOf(range.commonAncestorContainer)
+        var rootEl = annotationRootOf(range.commonAncestorContainer)
+        var source = documentSourceOf(range.commonAncestorContainer)
+        if (source !== null && source.sessionId !== sessions.list.getSnapshot().current) rootEl = null
         if (rootEl === null) { clearSettle(); closeToolbar(); return }
+        if (ui.mode === 'actions' && key === ui.lastKey && text === ui.quote && rootEl === ui.selectionRoot
+          && (ui.source && ui.source.sourceUrl) === (source && source.sourceUrl)) { clearSettle(); return }
         clearSettle()
         settleTimer = setTimeout(function () {
           settleTimer = null
@@ -890,11 +1065,14 @@ window.__ModuleLoader__.load({
           var s = window.getSelection()
           if (s === null || s.isCollapsed || selectionKey(s) !== key) return
           var r = s.getRangeAt(0)
-          if (assistantRowOf(r.commonAncestorContainer) === null) return
+          if (annotationRootOf(r.commonAncestorContainer) !== rootEl) return
+          var currentSource = documentSourceOf(r.commonAncestorContainer)
+          if ((currentSource && currentSource.sourceUrl) !== (source && source.sourceUrl)
+            || (source !== null && source.sessionId !== sessions.list.getSnapshot().current)) return
           var rect = r.getBoundingClientRect()
           if (rect.width === 0 || rect.height === 0) return
           var p = placeAbove(rect, 40)
-          if (ui.mode === 'actions' && ui.quote === text) {
+          if (ui.mode === 'actions' && ui.quote === text && (ui.source && ui.source.sourceUrl) === (source && source.sourceUrl)) {
             ui.lastKey = key
             ui.pos = p
             if (ui.el !== null && ui.el.style) {
@@ -906,6 +1084,8 @@ window.__ModuleLoader__.load({
           ui.lastKey = key
           ui.mode = 'actions'
           ui.quote = text
+          ui.source = source
+          ui.selectionRoot = rootEl
           ui.error = null
           ui.pos = p
           render()
@@ -936,18 +1116,21 @@ window.__ModuleLoader__.load({
         requestAnimationFrame(function () {
           anchorRaf = false
           if (ui.quotes.length > 0) renderMarkers()
+          updateChip()
+          if (ui.mode === 'editing' && ui.el !== null) positionEditor(ui.el, ui.pos.left, ui.pos.top)
           if (ui.mode !== 'actions' || ui.quote === '') return
           var rect = null
           var sel = window.getSelection()
           if (sel !== null && !sel.isCollapsed && sel.rangeCount > 0) {
             var live = sel.getRangeAt(0)
-            if (assistantRowOf(live.commonAncestorContainer) !== null
+            if (annotationRootOf(live.commonAncestorContainer) === ui.selectionRoot
+              && (documentSourceOf(live.commonAncestorContainer)?.sourceUrl || '') === (ui.source && ui.source.sourceUrl || '')
               && sel.toString().trim() === ui.quote) {
               rect = live.getBoundingClientRect()
             }
           }
           if (rect === null) {
-            var range = locateQuote(ui.quote)
+            var range = locateQuote(ui.quote, ui.source)
             if (range !== null) rect = range.getBoundingClientRect()
           }
           if (rect === null || rect.width === 0 || rect.height === 0) {
@@ -980,7 +1163,8 @@ window.__ModuleLoader__.load({
           var el = t instanceof Element ? t : (t && t.parentElement)
           if (el === null || !el.closest) return true
           if (el.closest('[data-composer-card]') || el.closest('[data-input-scroll]')
-            || el.closest('[data-annotation-for-dsh]') || el.closest('[data-annotation-overlay]')) {
+            || el.closest('[data-annotation-for-dsh]') || el.closest('[data-annotation-overlay]')
+            || el.closest('[data-annotation-chip]') || el.closest('[data-annotation-tip-layer]')) {
             continue
           }
           return true
@@ -995,9 +1179,25 @@ window.__ModuleLoader__.load({
         if (!mutationRelevant(mutations)) return
         onLayoutChange()
         // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：
+        // 只有「消息行插入」批次才同步执行气泡装饰（隐藏引用块 + 贴标签）：
         // MutationObserver 回调在微任务阶段运行，早于浏览器绘制，
         // 用户看不到「先显示引用块再隐藏」的闪烁。
-        decorateAll()
+        // 流式输出期的主体 mutation 是 attributes/characterData（每个 token 帧一层
+        // class/style/文本变更，实测 20s 内 245 批次 0 个 childList）：行插入本来
+        // 就携带完整引用块，逐一触发全文档扫描（decorateAll 是 querySelectorAll +
+        // 每行子树查询 + textContent，成本随会话长度线性增长）会在长会话上白白
+        // 烧主线程；漏网场景由下方 1s 兜底轮询覆盖。
+        var hasRowInsert = false
+        for (var i = 0; i < mutations.length; i++) {
+          if (mutations[i].type === 'childList') { hasRowInsert = true; break }
+        }
+        if (hasRowInsert) {
+          decorateAll()
+          return
+        }
+        // 流式批次: 只做助手回复芯片的限流装饰(行内 data-streaming 守卫已保证
+        // 流式中不做替换, 结束后的首拍芯片滞后 ≤500ms), 不再逐批全文档扫描。
+        scheduleAssistantDecorate()
       })
       function messageFlowRoot() {
         return document.querySelector('[data-chat-flow]')
@@ -1067,17 +1267,7 @@ window.__ModuleLoader__.load({
             if (attached && (e.ctrlKey || e.metaKey)) {
               e.preventDefault()
               e.stopPropagation()
-              var current = sessions.list.getSnapshot().current
-              if (current !== undefined) {
-                var scoped = sessions.scope(current)
-                if (scoped !== undefined) {
-                  try {
-                    ctx.conversation.input.for(scoped).submit('queue')
-                  } catch (err) {
-                    console.warn('[annotation] Cmd/Ctrl+Enter 直接提交失败：', err)
-                  }
-                }
-              }
+              submitAttached()
             }
           }
         }
@@ -1086,33 +1276,47 @@ window.__ModuleLoader__.load({
       // 提交）——否则等我们执行时消息已提交，拼稿永远太迟。
       document.addEventListener('keydown', onKeyDown, true)
 
-      // PATCH(2026-08-14d): 点击发送按钮同样要拼稿——DSH composer 的发送按钮
-      // 走 onClick: onPrimary 直接提交草稿，不产生 keydown Enter；若用户点按钮
-      // 发送（而非回车），引用块不会拼进草稿，消息发出后 watchInputDraft 又按
-      // 「草稿从有→空」清空 quotes，引用被静默丢弃（「添加了引用但没带上」）。
-      // 在 capture 阶段拦截点击：目标是 composer 卡内的主发送按钮（primary
-      // 类 + aria-label 含「发送/Send」且非「停止/Stop」）时，先拼稿再放行。
-      function onDocClickCapture(e) {
-        if (ui.quotes.length === 0) return
-        var target = e.target
-        if (!(target instanceof Element)) return
-        var btn = target.closest('button')
-        if (btn === null) return
-        var card = btn.closest('[data-composer-card]')
-        if (card === null) return
-        // 发送按钮特征：primary 类 + aria-label 是发送语义（本地化：发送/Send/Submit）。
-        // 停止按钮（stop）也同卡同域，但 aria-label 是「停止/Stop」——显式排除。
-        var label = (btn.getAttribute('aria-label') || '').trim()
-        if (label === '') return
-        var isStop = /停止|stop/i.test(label)
-        var isSend = /发送|send|submit/i.test(label)
-        if (!isSend || isStop) return
-        if (btn.disabled) return
-        // v1.4.x 适配：attachAndSend(e) 需要 event 判定修饰键；
-        // 点击路径等价裸 Enter（无修饰键），传合成事件对象。
+      function submitAttached() {
+        var current = sessions.list.getSnapshot().current
+        if (current === undefined) return
+        var scoped = sessions.scope(current)
+        if (scoped === undefined) return
+        try {
+          ctx.conversation.input.for(scoped).submit('queue')
+        } catch (err) {
+          console.warn('[annotation] 引用直接提交失败：', err)
+        }
+      }
+
+      function sendButtonOf(target) {
+        if (!(target instanceof Element) || typeof target.closest !== 'function') return null
+        var button = target.closest('button')
+        if (!(button instanceof HTMLButtonElement)
+          || button.closest('[data-composer-card]') === null) return null
+        var label = button.getAttribute('aria-label')
+        return label === '发送消息' || label === 'Send message' ? button : null
+      }
+
+      // 鼠标/触控发送不经过 textarea 的 Enter 路径。pointerdown 能覆盖宿主因
+      // 空草稿而禁用的发送按钮；已有文字时只拼稿，后续 click 仍由宿主提交。
+      function onSendPointerDown(e) {
+        if (ui.quotes.length === 0 || e.button !== 0) return
+        var button = sendButtonOf(e.target)
+        if (button === null) return
+        var wasDisabled = button.disabled
+        if (!attachAndSend({ ctrlKey: false, metaKey: false }) || !wasDisabled) return
+        e.preventDefault()
+        e.stopPropagation()
+        submitAttached()
+      }
+
+      // 键盘/辅助技术激活按钮时没有 pointerdown，以 detail=0 的 click 补齐。
+      function onSendKeyboardClick(e) {
+        if (e.detail !== 0 || ui.quotes.length === 0 || sendButtonOf(e.target) === null) return
         attachAndSend({ ctrlKey: false, metaKey: false })
       }
-      document.addEventListener('click', onDocClickCapture, true)
+      document.addEventListener('pointerdown', onSendPointerDown, true)
+      document.addEventListener('click', onSendKeyboardClick, true)
 
       // ---------- 渲染 ----------
       function iconButton(cls, icon, title, onClick) {
@@ -1145,7 +1349,7 @@ window.__ModuleLoader__.load({
           bar.className = 'dsh-ann-bar'
           bar.style.left = ui.pos.left + 'px'
           bar.style.top = ui.pos.top + 'px'
-          var already = ui.quotes.some(function (q) { return q.text === ui.quote })
+          var already = ui.quotes.some(function (q) { return q.text === ui.quote && (q.sourceUrl || '') === (ui.source && ui.source.sourceUrl || '') })
           // PATCH(2026-08-14c): 单按钮制——图标恒无（v1.4.x i18n 适配：文案走
           // t()，「可留空 = 仅引用原文」提示见 annotateTitle 字典补充）。
           bar.appendChild(ghostButton(
@@ -1165,6 +1369,7 @@ window.__ModuleLoader__.load({
           ui.el = card
           var head = document.createElement('div')
           head.className = 'dsh-ann-card-head'
+          makeEditorDraggable(head, card)
           var title = document.createElement('div')
           title.className = 'dsh-ann-card-title'
           title.textContent = ui.editingId !== null ? t('edit.editTitle') : t('edit.addTitle')
@@ -1173,8 +1378,8 @@ window.__ModuleLoader__.load({
           card.appendChild(head)
           var quote = document.createElement('div')
           quote.className = 'dsh-ann-quote'
-          quote.textContent = truncate(ui.quote, 200)
-          quote.title = ui.quote
+          quote.textContent = truncate(quoteWithSource({ text: ui.quote, sourcePath: ui.source && ui.source.sourcePath }), 200)
+          quote.title = quoteWithSource({ text: ui.quote, sourcePath: ui.source && ui.source.sourcePath })
           card.appendChild(quote)
           var ta = document.createElement('textarea')
           ta.className = 'dsh-ann-input'
@@ -1226,13 +1431,34 @@ window.__ModuleLoader__.load({
           ta.focus()
           ta.setSelectionRange(ta.value.length, ta.value.length)
           requestAnimationFrame(function () {
-            var h = card.offsetHeight
-            var t = parseFloat(card.style.top)
-            if (t + h > window.innerHeight - 8) {
-              card.style.top = Math.max(8, window.innerHeight - h - 8) + 'px'
-            }
+            if (card.isConnected) positionEditor(card, ui.pos.left, ui.pos.top)
           })
         }
+      }
+
+      function positionEditor(card, left, top) {
+        ui.pos = {
+          left: Math.max(8, Math.min(left, window.innerWidth - card.offsetWidth - 8)),
+          top: Math.max(8, Math.min(top, window.innerHeight - card.offsetHeight - 8)),
+        }
+        card.style.left = ui.pos.left + 'px'
+        card.style.top = ui.pos.top + 'px'
+      }
+
+      function makeEditorDraggable(head, card) {
+        var drag = null
+        head.addEventListener('pointerdown', function (e) {
+          if (e.button !== 0 || !e.isPrimary || e.target.closest('button')) return
+          var r = card.getBoundingClientRect()
+          drag = { id: e.pointerId, x: e.clientX - r.left, y: e.clientY - r.top }
+          head.setPointerCapture(e.pointerId)
+          e.preventDefault()
+        })
+        head.addEventListener('pointermove', function (e) {
+          if (drag === null || e.pointerId !== drag.id) return
+          positionEditor(card, e.clientX - drag.x, e.clientY - drag.y)
+        })
+        head.addEventListener('lostpointercapture', function () { drag = null })
       }
 
       // ---------- 引用标记 ----------
@@ -1243,7 +1469,7 @@ window.__ModuleLoader__.load({
           var q = ui.quotes[i]
           var range = locateQuote(q.text, q)
           if (range === null) { parts.push(q.id + ':gone'); continue }
-          var rects = range.getClientRects()
+          var rects = quoteRects(range, q)
           for (var c = 0; c < rects.length; c++) {
             var r = rects[c]
             if (r.width === 0 || r.height === 0) continue
@@ -1255,6 +1481,15 @@ window.__ModuleLoader__.load({
       }
 
       function renderMarkers() {
+        // 对整个标记层挖去输入框区域；滚动、尺寸变化时即使原文没动也要刷新。
+        var composer = document.querySelector('[data-composer-card]')
+        var r = composer !== null ? composer.getBoundingClientRect() : null
+        overlay.style.clipPath = r !== null && r.width > 0 && r.height > 0
+          ? 'polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, '
+            + r.left + 'px ' + r.top + 'px, ' + r.right + 'px ' + r.top + 'px, '
+            + r.right + 'px ' + r.bottom + 'px, ' + r.left + 'px ' + r.bottom + 'px, '
+            + r.left + 'px ' + r.top + 'px)'
+          : 'none'
         var sig = markersSignature()
         if (sig !== markersSig) {
           markersSig = sig
@@ -1279,7 +1514,7 @@ window.__ModuleLoader__.load({
           var q = ui.quotes[i]
           var range = locateQuote(q.text, q)
           if (range === null) continue
-          var rects = range.getClientRects()
+          var rects = quoteRects(range, q)
           for (var c = 0; c < rects.length; c++) {
             var rect = rects[c]
             if (rect.width === 0 || rect.height === 0) continue
@@ -1357,6 +1592,13 @@ window.__ModuleLoader__.load({
           if (textMatch) {
             anchor.range = live.cloneRange()
           }
+          var source = documentSourceOf(live.commonAncestorContainer)
+          if (source !== null) {
+            anchor.sourceUrl = source.sourceUrl
+            anchor.sourcePath = source.sourcePath
+            anchor.textOffset = offsetOfRangeInRow(source.root, live) + liveText.indexOf(text)
+            return anchor
+          }
           var node = live.commonAncestorContainer
           var el = node instanceof Element ? node : (node !== null ? node.parentElement : null)
           // 主视图锚 key 为 data-chat-anchor-key；focus-chat 视图为
@@ -1401,6 +1643,7 @@ window.__ModuleLoader__.load({
       function openEditorFor(q) {
         ui.mode = 'editing'
         ui.quote = q.text
+        ui.source = q
         ui.noteDraft = q.note !== undefined ? q.note : ''
         ui.error = null
         ui.editingId = q.id
@@ -1413,20 +1656,20 @@ window.__ModuleLoader__.load({
         render()
       }
 
-      /** 组装引用块（编号 + 原文 + 引用，结尾带唯一的「提问：」分隔标记——
-       *  不用「问题：」是因为标题行「回答我的问题：」里也含它，气泡隐藏手术会误命中）。 */
-      function buildBlock() {
+      /** 组装引用块；只有附带正文时才添加「提问：」分隔标记。 */
+      function buildBlock(hasQuestion) {
         var n = ui.quotes.length
         var parts = ui.quotes.map(function (q, i) {
-          var s = (i + 1) + '. ' + q.text.replace(/\n/g, '\n   ')
+          var s = (i + 1) + '. ' + quoteWithSource(q).replace(/\n/g, '\n   ')
           if (q.note !== undefined && q.note.trim() !== '') {
             s += '\n   ' + t('block.notePrefix') + q.note.replace(/\n/g, '\n    ')
           }
           return s
         })
-        return t('block.head', { n: n }) + '\n\n'
+        return t(hasQuestion ? 'block.head' : 'block.headOnly', { n: n }) + '\n\n'
           + parts.join('\n\n')
-          + '\n\n' + t('block.format', { n: n }) + '\n\n' + t('block.marker')
+          + '\n\n' + t(hasQuestion ? 'block.format' : 'block.formatOnly', { n: n })
+          + (hasQuestion ? '\n\n' + t('block.marker') : '')
       }
 
       function shouldAttachForEnter(e, draft) {
@@ -1476,8 +1719,19 @@ window.__ModuleLoader__.load({
           // 里的旧块可能已过期（引用集已变），stripOldBlock 剥旧块再拼新块，
           // 用户已输入文字保留在块后；发送确认制清理（watchInputDraft）不受影响。
           var clean = stripOldBlock(draft)
-          var block = buildBlock()
-          shell.setDraft(block + (clean === '' ? '' : '\n' + clean))
+          // ab594842：上游 v1.4.11 纯引用块走 block.headOnly/formatOnly（无「提问：」
+          // 标记），不在 stripOldBlock 的标记正则内；按首尾文案补剥，保留块后用户文字。
+          if (clean === draft) {
+            clean = draft.replace(
+              /^\n*(?:我引用了以下|I annotated the following)[\s\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format "Annotation N: …".)\n*/,
+              '',
+            )
+            // 仍剥不动（未知格式）：整块作废，避免旧块随新块重复发出。
+            if (clean === draft) clean = ''
+          }
+          var hasQuestion = clean.trim() !== ''
+          var block = buildBlock(hasQuestion)
+          shell.setDraft(block + (hasQuestion ? '\n' + clean : ''))
           annotationAttached = true
           console.log('[annotation] 引用块已拼入草稿，回车将随消息发送（' + ui.quotes.length + ' 条）')
           return true
@@ -1494,27 +1748,16 @@ window.__ModuleLoader__.load({
       // 会强制滚动页面（视觉上"卡一下"）；延迟一帧让卡片关闭动画先完成，
       // 焦点回归更平滑。
       function focusComposer() {
-        // PATCH(2026-09-01-lexical): 两种 composer 形态都要能聚焦：老版 <textarea>，新版 Lexical
-        // contenteditable（选择器不带引号值会漏掉 div[contenteditable="true"]）。
-        var ta = document.querySelector('[data-composer-card] textarea')
-          || document.querySelector('[data-composer-card] [contenteditable="true"]')
-        if (!(ta instanceof HTMLElement) || ta.disabled) return
+        var input = document.querySelector('[data-composer-card] [data-composer-input]')
+        if (!(input instanceof HTMLElement) || !input.isContentEditable) return
         requestAnimationFrame(function () {
-          if (!ta.isConnected) return
-          ta.focus({ preventScroll: true })
-          if (ta instanceof HTMLTextAreaElement) {
-            ta.setSelectionRange(ta.value.length, ta.value.length)
-            return
+          if (!input.isConnected) return
+          input.focus({ preventScroll: true })
+          var selection = window.getSelection()
+          if (selection !== null) {
+            selection.selectAllChildren(input)
+            selection.collapseToEnd()
           }
-          // contenteditable：光标放到文末（Lexical 会接管后续输入）
-          try {
-            var sel = window.getSelection()
-            var range = document.createRange()
-            range.selectNodeContents(ta)
-            range.collapse(false)
-            sel.removeAllRanges()
-            sel.addRange(range)
-          } catch (_) { /* 光标定位失败不影响聚焦 */ }
         })
       }
 
@@ -1531,6 +1774,7 @@ window.__ModuleLoader__.load({
               ui.pendingAnchor = null
               ui.noteDraft = ''
               ui.error = null
+              writeCurrentPendingQuotes()
               closeToolbar()
               updateChip()
               renderMarkers()
@@ -1540,13 +1784,14 @@ window.__ModuleLoader__.load({
           }
           ui.editingId = null
         }
-        if (!ui.quotes.some(function (q) { return q.text === text })) {
+        if (!ui.quotes.some(function (q) { return q.text === text && (q.sourceUrl || '') === (ui.pendingAnchor && ui.pendingAnchor.sourceUrl || '') })) {
           var a = ui.pendingAnchor || { range: null, seqKey: '', rowHead: '', textOffset: -1, ctxBefore: '', ctxAfter: '' }
           ui.quotes.push({
             id: 'q-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
             text: text,
             note: note,
             range: a.range,
+            ...(a.sourceUrl ? { sourceUrl: a.sourceUrl, sourcePath: a.sourcePath } : {}),
             seqKey: a.seqKey,
             rowHead: a.rowHead,
             textOffset: a.textOffset,
@@ -1554,6 +1799,7 @@ window.__ModuleLoader__.load({
             ctxAfter: a.ctxAfter,
           })
         }
+        writeCurrentPendingQuotes()
         ui.pendingAnchor = null
         ui.noteDraft = ''
         ui.error = null
@@ -1565,6 +1811,7 @@ window.__ModuleLoader__.load({
 
       function removeQuote(id) {
         ui.quotes = ui.quotes.filter(function (q) { return q.id !== id })
+        writeCurrentPendingQuotes()
         updateChip()
         render()
         renderMarkers()
@@ -1669,6 +1916,11 @@ window.__ModuleLoader__.load({
         chipLayer.appendChild(document.createTextNode(t('chip.count')))
         if (card === null) { chipLayer.style.display = 'none'; return }
         var r = card.getBoundingClientRect()
+        if (r.width === 0 || r.height === 0 || r.right <= 0 || r.bottom <= 0
+          || r.left >= window.innerWidth || r.top >= window.innerHeight) {
+          chipLayer.style.display = 'none'
+          return
+        }
         var w = chipLayer.offsetWidth || 80
         var h = chipLayer.offsetHeight || 22
         chipLayer.style.left = Math.max(8, r.right - w - 12) + 'px'
@@ -1714,7 +1966,7 @@ window.__ModuleLoader__.load({
           num.textContent = String(i + 1)
           var body = document.createElement('span')
           body.style.cssText = 'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary);'
-          body.textContent = truncate(q.text, 50)
+          body.textContent = truncate(quoteWithSource(q), 100)
           item.appendChild(num)
           item.appendChild(body)
           if (q.note !== undefined && q.note.trim() !== '') {
@@ -1753,14 +2005,13 @@ window.__ModuleLoader__.load({
       // 仅当引用块真正拼入过草稿（用户按过回车）才在草稿清空时清除引用，
       // 避免普通草稿编辑（打字后删字）误触发「已发送」判定而清空引用集。
       var annotationAttached = false
-      function watchInputDraft() {
-        if (typeof inputUnsub === 'function') { inputUnsub(); inputUnsub = null }
-        var id = sessions.list.getSnapshot().current
-        if (id === undefined) return
+      var inputWatchTimer = null
+      function tryWatchInputDraft(id) {
         try {
           var sc = sessions.scope(id)
-          if (sc === undefined) return
+          if (sc === undefined) return false
           var sh = ctx.conversation.input.for(sc)
+          if (sh === undefined || sh === null || typeof sh.state.subscribe !== 'function') return false
           var hadDraft = false
           inputUnsub = sh.state.subscribe(function () {
             var d = (sh.state.getSnapshot().draft || '').trim()
@@ -1771,10 +2022,11 @@ window.__ModuleLoader__.load({
             // 同时在刚发出的用户消息气泡上贴「N 条引用」标签。
             if (wasHad && d === '' && annotationAttached) {
               var sentItems = ui.quotes.map(function (q) {
-                return { text: q.text, note: q.note || '' }
+                return { text: quoteWithSource(q), note: q.note || '' }
               })
               ui.quotes = []
               annotationAttached = false
+              writeCurrentPendingQuotes()
               tipLayer.textContent = ''
               updateChip()
               renderMarkers()
@@ -1782,7 +2034,25 @@ window.__ModuleLoader__.load({
               kickDecorate()
             }
           })
-        } catch (_) { inputUnsub = null }
+          return true
+        } catch (_) { inputUnsub = null; return false }
+      }
+      // 发送清空只认这里的「草稿有→空」迁移（装饰扫描不再兜底，见 decorateAll）。
+      // 插件可能先于会话加载完成：current 未定、scope/input 尚不可用时订阅会失败，
+      // 必须每秒重试直到挂上，否则一次发送的清空被漏掉，已发送的引用会永远留在
+      // 待发送集里，之后每次 Enter 都重新拼进草稿。
+      function watchInputDraft() {
+        if (inputWatchTimer !== null) { clearInterval(inputWatchTimer); inputWatchTimer = null }
+        if (typeof inputUnsub === 'function') { inputUnsub(); inputUnsub = null }
+        var id = sessions.list.getSnapshot().current
+        if (id !== undefined && tryWatchInputDraft(id)) return
+        inputWatchTimer = setInterval(function () {
+          var cur = sessions.list.getSnapshot().current
+          if (cur !== undefined && tryWatchInputDraft(cur)) {
+            clearInterval(inputWatchTimer)
+            inputWatchTimer = null
+          }
+        }, 1000)
       }
 
       /** 把引用块文本从用户消息气泡里藏掉（模型消息内容不受影响）：
@@ -1801,6 +2071,15 @@ window.__ModuleLoader__.load({
           while ((n = walker.nextNode()) !== null) {
             nodes.push(n)
             full += n.nodeValue || ''
+          }
+          // 纯引用用完整首尾文案识别，避免原文中的「提问：」被误当成正文分隔符。
+          var annotationOnly = ['zh', 'en'].some(function (lang) {
+            return full.indexOf(dictVal(lang, 'block.headOnly')) === 0
+              && full.trimEnd().endsWith(dictVal(lang, 'block.formatOnly'))
+          })
+          if (annotationOnly) {
+            nodes.forEach(function (node) { node.nodeValue = '' })
+            return true
           }
           // 标记定位：当前语言优先（zh「提问：」/ en「Ask:」，均先带「\n」再裸匹配），
           // 另兼容另一语言与「问题：」老格式，保证历史消息跨语言切换可解析。
@@ -2001,6 +2280,25 @@ window.__ModuleLoader__.load({
       }
 
       /** 扫描所有已结束流式输出的助手行：把「Annotation N：」替换为可悬浮芯片。 */
+      /** 流式 mutation 批次的芯片装饰限流: 前导 + 500ms 拖尾, 每批次最多触发一次
+       *  增量扫描(只扫助手行), 代替逐批全文档 decorateAll。 */
+      var lastAssistantDecorate = 0
+      var assistantDecorateTimer = null
+      function scheduleAssistantDecorate() {
+        var now = performance.now()
+        if (now - lastAssistantDecorate >= 500) {
+          lastAssistantDecorate = now
+          decorateAssistantAnnotations()
+          return
+        }
+        if (assistantDecorateTimer !== null) return
+        assistantDecorateTimer = setTimeout(function () {
+          assistantDecorateTimer = null
+          lastAssistantDecorate = performance.now()
+          decorateAssistantAnnotations()
+        }, 500 - (now - lastAssistantDecorate))
+      }
+
       function decorateAssistantAnnotations() {
         var rows = assistantRows()
         for (var i = 0; i < rows.length; i++) {
@@ -2133,19 +2431,16 @@ window.__ModuleLoader__.load({
             if (b === null || !hasAnnotationBlock(b.textContent || '')) continue
             // 最新一条优先消费发送时暂存的数据；其余从气泡文本反解析（须在隐藏前）。
             var items = null
-            if (i === rows.length - 1 && pendingDeco.length > 0) items = pendingDeco.pop().items
-            if (items === null || items.length === 0) items = parseItemsFromBubble(el)
-            if (!hideAnnotationBlock(el)) continue // 内容未渲染完 → 留给下轮
+            var fromSend = false
+            if (i === rows.length - 1 && pendingDeco.length > 0) { items = pendingDeco[0].items; fromSend = true }
+            if (items === null || items.length === 0) { items = parseItemsFromBubble(el); fromSend = false }
+            if (!hideAnnotationBlock(el)) continue // 内容未渲染完 → 留给下轮（发送暂存数据不弹出）
+            if (fromSend) pendingDeco.shift()
             attachBubbleTag(el, items)
-            // 引用已随消息真实发出（用户气泡带着引用块出现）→ 清空待发送引用集。
-            // 兜底 watchInputDraft 在初始化时会话未加载时失效的场景：若不清空，
-            // 之后每次在 composer 按 Enter 都会把引用块重新注入草稿，且 setDraft
-            // 可能打断输入法合成（中文上不了屏）。
-            if (ui.quotes.length > 0) {
-              ui.quotes = []
-              updateChip()
-              renderMarkers()
-            }
+            // 这里绝不清空待发送引用：DOM 层面无法区分「刚发送的消息」与「会话
+            // 切换/刷新后重新渲染的历史消息」，历史消息重装饰曾被误判为已发送而
+            // 清空刚恢复的待发送引用（issue #28 复测）。发送清空的唯一权威是
+            // watchInputDraft 的「草稿有→空」迁移，其初始化时序洞由订阅重试补齐。
           }
           // 助手回复：把「Annotation N：」变为可悬浮的引用芯片（内容取自最近一条带引用的用户消息）。
           decorateAssistantAnnotations()
@@ -2205,18 +2500,20 @@ window.__ModuleLoader__.load({
         try { localeUnsub = ctx.locale.subscribe(applyLocale) } catch (_) { localeUnsub = null }
       }
 
-      // ---------- 会话切换时收起浮窗并清空引用 ----------
+      // ---------- 待发送引用按会话恢复 ----------
       var lastSessionId = sessions.list.getSnapshot().current
+      ui.quotes = readPendingQuotes(lastSessionId)
       var unsub = sessions.list.subscribe(function () {
         var cur = sessions.list.getSnapshot().current
         if (cur === lastSessionId) return
+        writePendingQuotes(lastSessionId)
         lastSessionId = cur
         if (ui.mode !== 'closed') closeToolbar()
-        ui.quotes = []
-        // pendingDeco 属于上一会话的发送暂存；跨会话保留会把 hover 数据
-        // 贴到新会话最新一条用户消息上。
-        pendingDeco = []
+        ui.quotes = readPendingQuotes(cur)
         annotationAttached = false
+        // 旧会话未消费的发送暂存作废：留着会被新会话的历史消息误消费（错贴标签）；
+        // 旧会话那条消息回切后会由气泡反解析路径重新装饰。
+        pendingDeco.length = 0
         ui.noteDraft = ''
         tipLayer.textContent = ''
         updateChip()
@@ -2234,7 +2531,8 @@ window.__ModuleLoader__.load({
         document.removeEventListener('selectionchange', onSelection)
         document.removeEventListener('pointerdown', onDocPointerDown, true)
         document.removeEventListener('keydown', onKeyDown, true)
-        document.removeEventListener('click', onDocClickCapture, true)
+        document.removeEventListener('pointerdown', onSendPointerDown, true)
+        document.removeEventListener('click', onSendKeyboardClick, true)
         document.removeEventListener('compositionstart', markImeComposing, true)
         document.removeEventListener('compositionend', markImeEnded, true)
         if (imeClearTimer !== null) { clearTimeout(imeClearTimer); imeClearTimer = null }
@@ -2257,6 +2555,7 @@ window.__ModuleLoader__.load({
         rootObserver.disconnect()
         observerTarget = null
         if (typeof unsub === 'function') unsub()
+        if (inputWatchTimer !== null) { clearInterval(inputWatchTimer); inputWatchTimer = null }
         if (typeof inputUnsub === 'function') inputUnsub()
         if (typeof localeUnsub === 'function') localeUnsub()
         if (decoTimer !== null) { clearTimeout(decoTimer); decoTimer = null }
