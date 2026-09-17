@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 42,
-  "verifiedAgainst": "2026-09-17 DSH 0.1.6-alpha.2 会话接口漂移修复：sessions 服务不再提供 current，改为统一解析器（op38-op45）；ab594842 基座 + 全部 op 重放字节级可复现，npm test 全绿",
+  "opsCount": 43,
+  "verifiedAgainst": "2026-09-17 DSH 0.1.6-alpha.2 适配：会话 id 解析器（op38-op45）+ 纯引用补剥不再吞用户输入（op46）；ab594842 基座全量重放字节级可复现，npm test 全绿",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -323,6 +323,13 @@
       "description": "PATCH：待发送引用按会话恢复/切换改用统一解析器",
       "find": "      var lastSessionId = sessions.list.getSnapshot().current\n      ui.quotes = readPendingQuotes(lastSessionId)\n      var unsub = sessions.list.subscribe(function () {\n        var cur = sessions.list.getSnapshot().current\n",
       "replace": "      var lastSessionId = currentSessionId()\n      ui.quotes = readPendingQuotes(lastSessionId)\n      var unsub = sessions.list.subscribe(function () {\n        var cur = currentSessionId()\n"
+    },
+    {
+      "id": "op46-p0917-keep-question",
+      "group": "p0917-keep-question",
+      "description": "PATCH(2026-09-17-keep-question)：无标记纯引用块的补剥只对「以引用块首句开头」的草稿生效，且剥不动保持原样——修复用户自己输入的文字被整块吞掉（只发出纯引用）",
+      "find": "          var clean = stripOldBlock(draft)\n          // ab594842：上游 v1.4.11 纯引用块走 block.headOnly/formatOnly（无「提问：」\n          // 标记），不在 stripOldBlock 的标记正则内；按首尾文案补剥，保留块后用户文字。\n          if (clean === draft) {\n            clean = draft.replace(\n              /^\\n*(?:我引用了以下|I annotated the following)[\\s\\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format \"Annotation N: …\".)\\n*/,\n              '',\n            )\n            // 仍剥不动（未知格式）：整块作废，避免旧块随新块重复发出。\n            if (clean === draft) clean = ''\n          }\n",
+      "replace": "          var clean = stripOldBlock(draft)\n          // ab594842：上游 v1.4.11 纯引用块走 block.headOnly/formatOnly（无「提问：」\n          // 标记），不在 stripOldBlock 的标记正则内，需按首尾文案补剥。\n          // PATCH(2026-09-17-keep-question)：补剥只对「确实以引用块首句开头」的草稿生效，\n          // 且剥不动就保持原样。此前写法对任何草稿（包括只有用户自己输入、根本没有残留块\n          // 的正常情况）都会落到 else 分支把 clean 置空，结果是把用户输入整条吞掉，\n          // 只发出一条纯引用（0.3.1 用户实测：前端里自己打的字消失）。\n          if (clean === draft && /^\\n*(?:我引用了以下|I annotated the following)/.test(draft)) {\n            var peeled = draft.replace(\n              /^\\n*(?:我引用了以下|I annotated the following)[\\s\\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format \"Annotation N: …\".)\\n*/,\n              '',\n            )\n            if (peeled !== draft) clean = peeled\n          }\n"
     }
   ],
   "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）",

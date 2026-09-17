@@ -1762,14 +1762,17 @@ window.__ModuleLoader__.load({
           // 用户已输入文字保留在块后；发送确认制清理（watchInputDraft）不受影响。
           var clean = stripOldBlock(draft)
           // ab594842：上游 v1.4.11 纯引用块走 block.headOnly/formatOnly（无「提问：」
-          // 标记），不在 stripOldBlock 的标记正则内；按首尾文案补剥，保留块后用户文字。
-          if (clean === draft) {
-            clean = draft.replace(
+          // 标记），不在 stripOldBlock 的标记正则内，需按首尾文案补剥。
+          // PATCH(2026-09-17-keep-question)：补剥只对「确实以引用块首句开头」的草稿生效，
+          // 且剥不动就保持原样。此前写法对任何草稿（包括只有用户自己输入、根本没有残留块
+          // 的正常情况）都会落到 else 分支把 clean 置空，结果是把用户输入整条吞掉，
+          // 只发出一条纯引用（0.3.1 用户实测：前端里自己打的字消失）。
+          if (clean === draft && /^\n*(?:我引用了以下|I annotated the following)/.test(draft)) {
+            var peeled = draft.replace(
               /^\n*(?:我引用了以下|I annotated the following)[\s\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format "Annotation N: …".)\n*/,
               '',
             )
-            // 仍剥不动（未知格式）：整块作废，避免旧块随新块重复发出。
-            if (clean === draft) clean = ''
+            if (peeled !== draft) clean = peeled
           }
           var hasQuestion = clean.trim() !== ''
           var block = buildBlock(hasQuestion)

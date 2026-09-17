@@ -86,8 +86,9 @@ function loadClient(window) {
  * @param {string[]} [drafts] 收集 setDraft 写入的草稿，供断言
  * @param {object} [snapshot] 会话列表快照；缺省模拟老宿主（带 current）
  * @param {object} [workspace] uiWorkspace 服务（新宿主的视图层当前会话）
+ * @param {string} [initialDraft] composer 里已有的草稿（模拟用户先打字再引用）
  */
-function makeCtx(drafts, snapshot, workspace) {
+function makeCtx(drafts, snapshot, workspace, initialDraft) {
   const sink = Array.isArray(drafts) ? drafts : []
   return {
     get(name) { return name === 'uiWorkspace' ? workspace : undefined },
@@ -103,7 +104,7 @@ function makeCtx(drafts, snapshot, workspace) {
         for() {
           return {
             state: {
-              getSnapshot() { return { draft: '' } },
+              getSnapshot() { return { draft: initialDraft ?? '' } },
               subscribe() { return () => {} },
             },
             setDraft(text) { sink.push(text) },
@@ -164,7 +165,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
  * 返回 setDraft 收到的草稿列表（长度 1 = 引用块成功随消息拼稿）。
  * @param {Document} doc @param {any} window @param {string} composerHtml 输入面节点
  */
-async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspace) {
+async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspace, initialDraft) {
   doc.body.innerHTML = [
     '<div data-chat-flow>',
     '  <div data-chat-flow-kind="assistant-step" data-chat-anchor-key="a1">',
@@ -197,7 +198,7 @@ async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspa
 
   const drafts = []
   const { exported } = loadClient(window)
-  const cleanup = exported.apply(makeCtx(drafts, snapshot, workspace))
+  const cleanup = exported.apply(makeCtx(drafts, snapshot, workspace, initialDraft))
   try {
     doc.dispatchEvent(new window.Event('selectionchange'))
     await wait(320)            // settle 定时器 250ms
@@ -268,6 +269,24 @@ test('0.1.6：快照无 current 时回退 uiWorkspace 视图层当前会话', as
       { mainReference: { sessionId: 'sess-ui' }, selection: { getSnapshot: () => ({ sessionId: 'sess-ui' }) } })
     assert.equal(drafts.length, 1, 'uiWorkspace 回退路径也须拼稿')
     assert.match(drafts[0], /quoted passage/)
+  } finally {
+    dom.window.close()
+  }
+})
+
+// 回归：用户先打字、再收集引用、然后回车——引用块要拼进去，但**用户自己的文字不能被吞**。
+// 0.3.1 起纯引用块补剥的 else 分支会把没有残留块的草稿整块置空，实测表现为前端气泡里
+// 只剩「引用 ×1」，用户输入消失。
+test('回车拼稿不得吞掉用户已输入的文字', async () => {
+  const dom = createDom()
+  try {
+    const drafts = await collectDraftsOnEnter(
+      dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
+      undefined, undefined, '帮我把这段代码改成 TypeScript')
+    assert.equal(drafts.length, 1, '回车必须拼稿')
+    assert.match(drafts[0], /quoted passage/, '引用块要在')
+    assert.match(drafts[0], /帮我把这段代码改成 TypeScript/, '用户自己输入的文字必须保留')
+    assert.match(drafts[0], /提问：/, '带正文时必须有「提问：」分隔标记')
   } finally {
     dom.window.close()
   }
