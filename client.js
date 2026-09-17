@@ -908,6 +908,48 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       var sessions = ctx.sessions
 
+      // PATCH(2026-09-17-current-session): DSH 0.1.6 起 sessions 服务不再暴露「当前会话」，
+      // 线上 provider 已是 dsh-api-session-controller 的 ClientSessions（其 list 快照只有
+      // ids/byId/phase/subagentsByParent/jobsBySession，源码注释写明 view selection remains
+      // outside the Controller）。旧字段 .current 恒为 undefined 会让「回车拼稿 / 按会话落盘 /
+      // 发送后清 chip」三处一起静默失效（既无日志也无 toast），表现为引用发不出去且 chip 常驻。
+      // 这里做统一解析：① 老宿主快照 current；② 新宿主视图层保留的当前会话；③ uiWorkspace
+      // 持久化选择单元；④ 宿主自己写在 localStorage 的 dsh.sessions.current。
+      var sessionWarned = false
+      function currentSessionId() {
+        var snap = sessions.list.getSnapshot()
+        if (snap !== null && snap !== undefined && snap.current !== undefined) return snap.current
+        try {
+          var ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : undefined
+          if (ui !== null && ui !== undefined) {
+            var ref = ui.mainReference
+            if (ref !== null && ref !== undefined
+              && typeof ref.sessionId === "string" && ref.sessionId !== "") return ref.sessionId
+            var sel = ui.selection
+            if (sel !== null && sel !== undefined && typeof sel.getSnapshot === "function") {
+              var picked = sel.getSnapshot()
+              if (picked !== null && picked !== undefined
+                && typeof picked.sessionId === "string" && picked.sessionId !== "") return picked.sessionId
+            }
+          }
+        } catch (_) {}
+        try {
+          var raw = localStorage.getItem("dsh.sessions.current")
+          if (typeof raw === "string" && raw !== "") {
+            var parsed = JSON.parse(raw)
+            if (parsed !== null && typeof parsed === "object"
+              && typeof parsed.sessionId === "string" && parsed.sessionId !== ""
+              && (snap === null || snap === undefined || !Array.isArray(snap.ids)
+                || snap.ids.indexOf(parsed.sessionId) !== -1)) return parsed.sessionId
+          }
+        } catch (_) {}
+        if (!sessionWarned) {
+          sessionWarned = true
+          console.warn("[annotation] 无法解析当前会话 id（宿主会话接口可能已变更）：引用拼稿与发送后清理不可用")
+        }
+        return undefined
+      }
+
       var host = document.createElement('div')
       host.setAttribute('data-annotation-for-dsh', '')
       document.body.appendChild(host)
@@ -952,7 +994,7 @@ window.__ModuleLoader__.load({
       }
 
       function writeCurrentPendingQuotes() {
-        writePendingQuotes(sessions.list.getSnapshot().current)
+        writePendingQuotes(currentSessionId())
       }
 
       var ignoreUntil = 0
@@ -1054,7 +1096,7 @@ window.__ModuleLoader__.load({
         var key = selectionKey(sel)
         var rootEl = annotationRootOf(range.commonAncestorContainer)
         var source = documentSourceOf(range.commonAncestorContainer)
-        if (source !== null && source.sessionId !== sessions.list.getSnapshot().current) rootEl = null
+        if (source !== null && source.sessionId !== currentSessionId()) rootEl = null
         if (rootEl === null) { clearSettle(); closeToolbar(); return }
         if (ui.mode === 'actions' && key === ui.lastKey && text === ui.quote && rootEl === ui.selectionRoot
           && (ui.source && ui.source.sourceUrl) === (source && source.sourceUrl)) { clearSettle(); return }
@@ -1068,7 +1110,7 @@ window.__ModuleLoader__.load({
           if (annotationRootOf(r.commonAncestorContainer) !== rootEl) return
           var currentSource = documentSourceOf(r.commonAncestorContainer)
           if ((currentSource && currentSource.sourceUrl) !== (source && source.sourceUrl)
-            || (source !== null && source.sessionId !== sessions.list.getSnapshot().current)) return
+            || (source !== null && source.sessionId !== currentSessionId())) return
           var rect = r.getBoundingClientRect()
           if (rect.width === 0 || rect.height === 0) return
           var p = placeAbove(rect, 40)
@@ -1277,7 +1319,7 @@ window.__ModuleLoader__.load({
       document.addEventListener('keydown', onKeyDown, true)
 
       function submitAttached() {
-        var current = sessions.list.getSnapshot().current
+        var current = currentSessionId()
         if (current === undefined) return
         var scoped = sessions.scope(current)
         if (scoped === undefined) return
@@ -1699,7 +1741,7 @@ window.__ModuleLoader__.load({
       /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。
        *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */
       function attachAndSend(e) {
-        var current = sessions.list.getSnapshot().current
+        var current = currentSessionId()
         if (current === undefined) return false
         try {
           var scoped = sessions.scope(current)
@@ -2044,10 +2086,10 @@ window.__ModuleLoader__.load({
       function watchInputDraft() {
         if (inputWatchTimer !== null) { clearInterval(inputWatchTimer); inputWatchTimer = null }
         if (typeof inputUnsub === 'function') { inputUnsub(); inputUnsub = null }
-        var id = sessions.list.getSnapshot().current
+        var id = currentSessionId()
         if (id !== undefined && tryWatchInputDraft(id)) return
         inputWatchTimer = setInterval(function () {
-          var cur = sessions.list.getSnapshot().current
+          var cur = currentSessionId()
           if (cur !== undefined && tryWatchInputDraft(cur)) {
             clearInterval(inputWatchTimer)
             inputWatchTimer = null
@@ -2501,10 +2543,10 @@ window.__ModuleLoader__.load({
       }
 
       // ---------- 待发送引用按会话恢复 ----------
-      var lastSessionId = sessions.list.getSnapshot().current
+      var lastSessionId = currentSessionId()
       ui.quotes = readPendingQuotes(lastSessionId)
       var unsub = sessions.list.subscribe(function () {
-        var cur = sessions.list.getSnapshot().current
+        var cur = currentSessionId()
         if (cur === lastSessionId) return
         writePendingQuotes(lastSessionId)
         lastSessionId = cur

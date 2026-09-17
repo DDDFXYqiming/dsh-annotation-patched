@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 34,
-  "verifiedAgainst": "2026-09-17 全量重放字节校验通过：ab594842(v1.4.11-preview.1) 基座 + terminology + 34 ops == client.js；失配 0；另 retired 4 条（op04/op18/op24/op27，上游已覆盖）",
+  "opsCount": 42,
+  "verifiedAgainst": "2026-09-17 DSH 0.1.6-alpha.2 会话接口漂移修复：sessions 服务不再提供 current，改为统一解析器（op38-op45）；ab594842 基座 + 全部 op 重放字节级可复现，npm test 全绿",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -267,6 +267,62 @@
       "description": "旧服务内联 think 兼容：decorateAssistantAnnotations 停流守卫后先剥 think 块，再走芯片逻辑",
       "find": "          if (el.hasAttribute('data-streaming') || el.querySelector('[data-streaming]') !== null) continue\n          if (el.querySelector('[data-annotation-reply-chip]') !== null) continue",
       "replace": "          if (el.hasAttribute('data-streaming') || el.querySelector('[data-streaming]') !== null) continue\n          stripInlineThink(el) // PATCH(2026-09-05): 先剥内联 think 块，再做芯片替换\n          if (el.querySelector('[data-annotation-reply-chip]') !== null) continue"
+    },
+    {
+      "id": "op38-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH(2026-09-17-current-session)：新增统一会话 id 解析器（旧快照 current → uiWorkspace 视图 → 持久化选择单元 → localStorage）",
+      "find": "      var sessions = ctx.sessions\n",
+      "replace": "      var sessions = ctx.sessions\n\n      // PATCH(2026-09-17-current-session): DSH 0.1.6 起 sessions 服务不再暴露「当前会话」，\n      // 线上 provider 已是 dsh-api-session-controller 的 ClientSessions（其 list 快照只有\n      // ids/byId/phase/subagentsByParent/jobsBySession，源码注释写明 view selection remains\n      // outside the Controller）。旧字段 .current 恒为 undefined 会让「回车拼稿 / 按会话落盘 /\n      // 发送后清 chip」三处一起静默失效（既无日志也无 toast），表现为引用发不出去且 chip 常驻。\n      // 这里做统一解析：① 老宿主快照 current；② 新宿主视图层保留的当前会话；③ uiWorkspace\n      // 持久化选择单元；④ 宿主自己写在 localStorage 的 dsh.sessions.current。\n      var sessionWarned = false\n      function currentSessionId() {\n        var snap = sessions.list.getSnapshot()\n        if (snap !== null && snap !== undefined && snap.current !== undefined) return snap.current\n        try {\n          var ui = typeof ctx.get === \"function\" ? ctx.get(\"uiWorkspace\") : undefined\n          if (ui !== null && ui !== undefined) {\n            var ref = ui.mainReference\n            if (ref !== null && ref !== undefined\n              && typeof ref.sessionId === \"string\" && ref.sessionId !== \"\") return ref.sessionId\n            var sel = ui.selection\n            if (sel !== null && sel !== undefined && typeof sel.getSnapshot === \"function\") {\n              var picked = sel.getSnapshot()\n              if (picked !== null && picked !== undefined\n                && typeof picked.sessionId === \"string\" && picked.sessionId !== \"\") return picked.sessionId\n            }\n          }\n        } catch (_) {}\n        try {\n          var raw = localStorage.getItem(\"dsh.sessions.current\")\n          if (typeof raw === \"string\" && raw !== \"\") {\n            var parsed = JSON.parse(raw)\n            if (parsed !== null && typeof parsed === \"object\"\n              && typeof parsed.sessionId === \"string\" && parsed.sessionId !== \"\"\n              && (snap === null || snap === undefined || !Array.isArray(snap.ids)\n                || snap.ids.indexOf(parsed.sessionId) !== -1)) return parsed.sessionId\n          }\n        } catch (_) {}\n        if (!sessionWarned) {\n          sessionWarned = true\n          console.warn(\"[annotation] 无法解析当前会话 id（宿主会话接口可能已变更）：引用拼稿与发送后清理不可用\")\n        }\n        return undefined\n      }\n"
+    },
+    {
+      "id": "op39-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：writeCurrentPendingQuotes 改用统一解析器（此前 current 恒 undefined 导致待发送引用永不落盘）",
+      "find": "      function writeCurrentPendingQuotes() {\n        writePendingQuotes(sessions.list.getSnapshot().current)\n      }\n",
+      "replace": "      function writeCurrentPendingQuotes() {\n        writePendingQuotes(currentSessionId())\n      }\n"
+    },
+    {
+      "id": "op40-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：选区来源判定改用统一解析器（1/2）",
+      "find": "        if (source !== null && source.sessionId !== sessions.list.getSnapshot().current) rootEl = null\n",
+      "replace": "        if (source !== null && source.sessionId !== currentSessionId()) rootEl = null\n"
+    },
+    {
+      "id": "op41-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：选区来源判定改用统一解析器（2/2）",
+      "find": "          if ((currentSource && currentSource.sourceUrl) !== (source && source.sourceUrl)\n            || (source !== null && source.sessionId !== sessions.list.getSnapshot().current)) return\n",
+      "replace": "          if ((currentSource && currentSource.sourceUrl) !== (source && source.sourceUrl)\n            || (source !== null && source.sessionId !== currentSessionId())) return\n"
+    },
+    {
+      "id": "op42-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：submitAttached 改用统一解析器（Ctrl/Cmd+Enter 纯引用直发）",
+      "find": "      function submitAttached() {\n        var current = sessions.list.getSnapshot().current\n",
+      "replace": "      function submitAttached() {\n        var current = currentSessionId()\n"
+    },
+    {
+      "id": "op43-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：attachAndSend 改用统一解析器（回车拼稿入口——本次故障的直接断点）",
+      "find": "      function attachAndSend(e) {\n        var current = sessions.list.getSnapshot().current\n",
+      "replace": "      function attachAndSend(e) {\n        var current = currentSessionId()\n"
+    },
+    {
+      "id": "op44-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：watchInputDraft 改用统一解析器（此前订阅永不建立，chip 永不清空）",
+      "find": "        var id = sessions.list.getSnapshot().current\n        if (id !== undefined && tryWatchInputDraft(id)) return\n        inputWatchTimer = setInterval(function () {\n          var cur = sessions.list.getSnapshot().current\n",
+      "replace": "        var id = currentSessionId()\n        if (id !== undefined && tryWatchInputDraft(id)) return\n        inputWatchTimer = setInterval(function () {\n          var cur = currentSessionId()\n"
+    },
+    {
+      "id": "op45-p0917-current-session",
+      "group": "p0917-current-session",
+      "description": "PATCH：待发送引用按会话恢复/切换改用统一解析器",
+      "find": "      var lastSessionId = sessions.list.getSnapshot().current\n      ui.quotes = readPendingQuotes(lastSessionId)\n      var unsub = sessions.list.subscribe(function () {\n        var cur = sessions.list.getSnapshot().current\n",
+      "replace": "      var lastSessionId = currentSessionId()\n      ui.quotes = readPendingQuotes(lastSessionId)\n      var unsub = sessions.list.subscribe(function () {\n        var cur = currentSessionId()\n"
     }
   ],
   "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）",

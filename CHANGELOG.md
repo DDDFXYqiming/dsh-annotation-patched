@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1] - 2026-09-17
+
+### 修复（DSH 0.1.6 会话接口漂移导致引用发不出去）
+- 现象：划词保存引用后 chip 常驻输入框右上角，回车 / Ctrl+Enter / 点发送按钮三条路径都不把引用块带进消息，控制台零 `[annotation]` 输出。
+- 根因（实测，非猜测）：DSH 0.1.6 起 `sessions` 服务的线上 provider 是 `dsh-api-session-controller` 的 `ClientSessions`，其 `list` 快照只有 `ids/byId/phase/subagentsByParent/jobsBySession`，源码注释写明 view selection remains outside the Controller——旧字段 `sessions.list.getSnapshot().current` **恒为 undefined**。插件在 `attachAndSend` 第一行就静默 `return false`；`writePendingQuotes` 拿不到会话 id 导致待发送引用永不落盘；`watchInputDraft` 订阅永不建立导致发送后 chip 永不清空。
+- 修复：新增统一解析器 `currentSessionId()`（op38），按「老宿主快照 `current` → `uiWorkspace.mainReference` 视图层当前会话 → `uiWorkspace.selection` 持久化选择单元 → 宿主自己写的 `localStorage[dsh.sessions.current]`」取会话 id，并在全部 8 处取用处替换（op39–op45）。解析失败时一次性 `console.warn`，不再静默。
+- 验证：`node scripts/apply-patches.mjs --fetch ab594842 --out client.js` → 42/42 op、0 失配、字节级可复现；`npm run check` 通过；`npm test` 9/9 通过（新增两条回归：快照无 `current` 时回退 localStorage、以及回退 uiWorkspace）。
 ## [0.3.0] - 2026-09-17
 
 ### 升级（基座迁移到上游 v1.4.11-preview.1，适配 DSH 0.1.6）

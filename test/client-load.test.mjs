@@ -82,13 +82,18 @@ function loadClient(window) {
   return { loadId, exported }
 }
 
-/** @param {string[]} [drafts] 收集 setDraft 写入的草稿，供断言 */
-function makeCtx(drafts) {
+/**
+ * @param {string[]} [drafts] 收集 setDraft 写入的草稿，供断言
+ * @param {object} [snapshot] 会话列表快照；缺省模拟老宿主（带 current）
+ * @param {object} [workspace] uiWorkspace 服务（新宿主的视图层当前会话）
+ */
+function makeCtx(drafts, snapshot, workspace) {
   const sink = Array.isArray(drafts) ? drafts : []
   return {
+    get(name) { return name === 'uiWorkspace' ? workspace : undefined },
     sessions: {
       list: {
-        getSnapshot() { return { current: 'sess-test' } },
+        getSnapshot() { return snapshot ?? { current: 'sess-test' } },
         subscribe() { return () => {} },
       },
       scope(id) { return { id } },
@@ -159,7 +164,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
  * 返回 setDraft 收到的草稿列表（长度 1 = 引用块成功随消息拼稿）。
  * @param {Document} doc @param {any} window @param {string} composerHtml 输入面节点
  */
-async function collectDraftsOnEnter(doc, window, composerHtml) {
+async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspace) {
   doc.body.innerHTML = [
     '<div data-chat-flow>',
     '  <div data-chat-flow-kind="assistant-step" data-chat-anchor-key="a1">',
@@ -192,7 +197,7 @@ async function collectDraftsOnEnter(doc, window, composerHtml) {
 
   const drafts = []
   const { exported } = loadClient(window)
-  const cleanup = exported.apply(makeCtx(drafts))
+  const cleanup = exported.apply(makeCtx(drafts, snapshot, workspace))
   try {
     doc.dispatchEvent(new window.Event('selectionchange'))
     await wait(320)            // settle 定时器 250ms
@@ -232,6 +237,36 @@ test('Enter attaches the block on a legacy textarea composer (backward compat)',
   try {
     const drafts = await collectDraftsOnEnter(dom.window.document, dom.window, '<textarea></textarea>')
     assert.equal(drafts.length, 1, '老 composer（textarea）回车仍须拼入引用块')
+    assert.match(drafts[0], /quoted passage/)
+  } finally {
+    dom.window.close()
+  }
+})
+
+// 回归：DSH 0.1.6 起 sessions.list 快照不再带 current（ClientSessions 把视图选择移出
+// Controller），插件必须回退到宿主自己持久化的会话选择，否则回车拼稿整条链路静默失效。
+test('0.1.6：快照无 current 时回退 localStorage[dsh.sessions.current]', async () => {
+  const dom = createDom()
+  try {
+    dom.window.localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: 'sess-ls' }))
+    const drafts = await collectDraftsOnEnter(
+      dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
+      { ids: ['sess-ls'], byId: {}, phase: 'ready' })
+    assert.equal(drafts.length, 1, '快照无 current 时仍须把引用块拼进草稿')
+    assert.match(drafts[0], /quoted passage/)
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('0.1.6：快照无 current 时回退 uiWorkspace 视图层当前会话', async () => {
+  const dom = createDom()
+  try {
+    const drafts = await collectDraftsOnEnter(
+      dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
+      { ids: ['sess-ui'], byId: {}, phase: 'ready' },
+      { mainReference: { sessionId: 'sess-ui' }, selection: { getSnapshot: () => ({ sessionId: 'sess-ui' }) } })
+    assert.equal(drafts.length, 1, 'uiWorkspace 回退路径也须拼稿')
     assert.match(drafts[0], /quoted passage/)
   } finally {
     dom.window.close()
