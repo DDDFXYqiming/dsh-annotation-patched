@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] - 2026-09-17
+
+### 对齐（客户端依赖声明跟随上游 v1.4.11）
+- `dsh.client.inject` 从只声明 `@deepseek-ai/dsh-client-ui-conversation` 补齐为 `@deepseek-ai/dsh-client-ui-session` + `@deepseek-ai/dsh-client-ui-conversation` + `@deepseek-ai/dsh-client-locale`（插件实际注入的 cordis 服务是 sessions/conversation/locale，与上游 1.4.11 声明一致）。
+- `peerDependencies` 从已不满足的 `@deepseek-ai/dsh-client-runtime` / `@deepseek-ai/dsh-client-ui-conversation` `^0.1.0-rc.6` 改为上游同款 `cordis: ^4.0.0-rc.7 || ^4.0.1`。
+- 客户端依赖图在宿主启动时合成，本项改动需重启宿主后生效（与 0.3.1/0.3.2 的热重载改动不同）。
 ## [0.3.2] - 2026-09-17
 
 ### 修复（回车拼稿吞掉用户自己输入的文字）
