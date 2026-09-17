@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### 补录（本地未推送补丁重放至 0.3.5 基线）
+- 原本地 op47-attach-debug（attachAndSend 静默早退可观测化，2c82cdd）因 0.3.4/0.3.5 改动了锚点区域，按新产物文本拆为 op66–op71 重新登记并重放：解析不到会话 id、同屏多 composer 歧义失败关闭（覆盖 op64 新闸）、scope 解析失败、shouldAttachForEnter 不拼稿、斜杠命令跳过共五条早退路径各补 `annDbgAttach` 告警，仅待发引用 >0 时打印，正常路径不刷屏。
+- 验证：69 条 op 对基座 ab594842 正序重放与产物字节级一致（`--expect` 通过）；`npm run check` + `npm test` 全绿。
+
 ## [0.3.5] - 2026-09-18
 
 修复（Agent Teams 多会话同屏 + rAF 泄漏）

@@ -37,7 +37,7 @@ DSH Web「选中引用」插件的本地增强版（fork 维护，v0.3.5）。�
 ### 6. 维护性
 
 - 所有改动都带 `PATCH(YYYY-MM-DD[组名])` 注释标记（`2026-08-14` 起，当前批次列表以 `client.js` 里的 `grep -o "PATCH([^)]*)" client.js | sort -u` 为准），上游更新时能快速定位 diff 重新套用
-- 补丁重放工具（v0.2.0 起）由 `scripts/apply-patches.mjs` 和 `patches/manifest.json` 组成，流程是取干净上游产物，做全局术语改名（批注→引用）和包名替换，再逐条重放 63 条锚定 op（另有 4 条因上游 v1.4.11 已覆盖而退休，记录在 manifest 的 `retired`）。每条锚文本必须恰好命中 1 次，失配就报错并列出适配指引
+- 补丁重放工具（v0.2.0 起）由 `scripts/apply-patches.mjs` 和 `patches/manifest.json` 组成，流程是取干净上游产物，做全局术语改名（批注→引用）和包名替换，再逐条重放 69 条锚定 op（另有 4 条因上游 v1.4.11 已覆盖而退休，记录在 manifest 的 `retired`）。每条锚文本必须恰好命中 1 次，失配就报错并列出适配指引
 - 调试日志 `[annotation] 引用块已拼入草稿…`、`[annotation] 斜杠技能 xxx 已随消息追加引用…` 和拼稿日志（带发送条数）都能在 DevTools Console 里看到
 - 跑本仓测试需要 Node `>=22.22.2`（devDependency jsdom 30 的要求）；`package.json` 里的 `engines: >=20` 只约束 DSH 宿主运行时，不表示 Node 20 能跑这里的 jsdom 测试
 - README 自述的版本号与 op 条数由 `npm test` 里的文档一致性断言与 `package.json` / `patches/manifest.json` 比对，防再次抄漏

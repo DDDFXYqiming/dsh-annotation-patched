@@ -1830,23 +1830,32 @@ window.__ModuleLoader__.load({
 
       /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。
        *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */
+      // PATCH(2026-09-18-attach-debug): 引用丢失排障。attachAndSend 的静默早退此前只
+      // return false、不留任何痕迹，于是「气泡带『引用 ×N』标记、消息里却没有引用块」
+      // 无从定位。仅在确有待发引用时告警，正常无引用路径不刷屏。
+      function annDbgAttach(why) {
+        try {
+          var n = (typeof ui !== 'undefined' && ui && ui.quotes && ui.quotes.length) ? ui.quotes.length : 0
+          if (n > 0) console.warn('[annotation] 拼稿早退（待发引用 ' + n + ' 条）：' + why)
+        } catch (_) {}
+      }
       function attachAndSend(e) {
         var current = currentSessionId()
-        if (current === undefined) return false
+        if (current === undefined) { annDbgAttach('currentSessionId() 解析不到当前会话 id'); return false }
         // PATCH(2026-09-18-team-sessions): 同屏可能出现多块 composer——Agent Team 面板把
         // teammate 换进主视图，右侧栏 ui-subagent 又渲染同一套 [data-composer-card]（对
         // continuable 子代理还可写）。而 currentSessionId() 只认主视图，宿主 DOM 又没有
         // 把 composer 卡片绑定到会话的标记（无 data-session/data-conversation），无法判定
         // 用户实际在敲哪一块。歧义时失败关闭：不拼稿、原样交回宿主发送——宁可少一次引用，
         // 也不把引用块写进错误会话的草稿。
-        if (document.querySelectorAll('[data-composer-card]').length > 1) return false
+        if (document.querySelectorAll('[data-composer-card]').length > 1) { annDbgAttach('同屏多块 composer，歧义失败关闭（op64 护栏）'); return false }
         try {
           var scoped = sessions.scope(current)
-          if (scoped === undefined) return false
+          if (scoped === undefined) { annDbgAttach('sessions.scope(current) 返回 undefined'); return false }
           var shell = ctx.conversation.input.for(scoped)
           var st = shell.state.getSnapshot()
           var draft = st.draft || ''
-          if (!shouldAttachForEnter(e, draft)) return false
+          if (!shouldAttachForEnter(e, draft)) { annDbgAttach('shouldAttachForEnter 判定本次不拼稿'); return false }
           // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，
           // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会
           // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。
@@ -1865,6 +1874,7 @@ window.__ModuleLoader__.load({
               return true
             }
             showToast(t('toast.skipCommand'))
+            annDbgAttach('isCommandDraft：斜杠命令不拼引用')
             return false
           }
           // PATCH(2026-08-14c): 残留块不跳过、剥离后重拼——上次追加未发送时草稿

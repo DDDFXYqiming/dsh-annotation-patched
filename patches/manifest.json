@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 63,
-  "verifiedAgainst": "2026-09-18 Agent Teams 增量修复：op64 composer 歧义失败关闭 + op65/op65b rAF disposed 守卫；追加 op 的 find 匹配前序 op 重放后的产物态，逆序重放全部 op 回基座、正序重放回产物双向自证",
+  "opsCount": 69,
+  "verifiedAgainst": "2026-09-18 rebase 至 0.3.5：原本地 op47-attach-debug（静默早退可观测化）按新产物文本拆为 op66-71 重放，覆盖 op64 多 composer 歧义闸；基座 ab594842 不变，全量正序重放与产物字节级一致复核",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -453,6 +453,48 @@
       "description": "PATCH(2026-09-18-team-sessions): onLayoutChange 的 rAF 回调补 disposed 守卫",
       "find": "      function onLayoutChange() {\n        if (anchorRaf) return\n        anchorRaf = true\n        requestAnimationFrame(function () {\n          anchorRaf = false\n",
       "replace": "      function onLayoutChange() {\n        if (anchorRaf) return\n        anchorRaf = true\n        requestAnimationFrame(function () {\n          anchorRaf = false\n          // PATCH(2026-09-18-team-sessions): 卸载后不再装饰（renderMarkers/updateChip）\n          if (disposed) return\n"
+    },
+    {
+      "id": "op66-attach-debug-helper",
+      "group": "attach-debug",
+      "description": "attachAndSend 前插入 annDbgAttach 调试告警函数（引用丢失排障，仅待发引用>0 时告警）",
+      "find": "      /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。\n       *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */\n      function attachAndSend(e) {",
+      "replace": "      /** 提交前把引用块拼进 composer 草稿（随回车一起发送）。\n       *  返回 true 表示引用块已在草稿中（本次刚拼入，或之前已拼入未发送）。 */\n      // PATCH(2026-09-18-attach-debug): 引用丢失排障。attachAndSend 的静默早退此前只\n      // return false、不留任何痕迹，于是「气泡带『引用 ×N』标记、消息里却没有引用块」\n      // 无从定位。仅在确有待发引用时告警，正常无引用路径不刷屏。\n      function annDbgAttach(why) {\n        try {\n          var n = (typeof ui !== 'undefined' && ui && ui.quotes && ui.quotes.length) ? ui.quotes.length : 0\n          if (n > 0) console.warn('[annotation] 拼稿早退（待发引用 ' + n + ' 条）：' + why)\n        } catch (_) {}\n      }\n      function attachAndSend(e) {"
+    },
+    {
+      "id": "op67-attach-debug-current",
+      "group": "attach-debug",
+      "description": "attachAndSend：解析不到会话 id 的早退补告警",
+      "find": "        var current = currentSessionId()\n        if (current === undefined) return false",
+      "replace": "        var current = currentSessionId()\n        if (current === undefined) { annDbgAttach('currentSessionId() 解析不到当前会话 id'); return false }"
+    },
+    {
+      "id": "op68-attach-debug-multi-composer",
+      "group": "attach-debug",
+      "description": "attachAndSend：op64 多 composer 歧义失败关闭补告警",
+      "find": "        if (document.querySelectorAll('[data-composer-card]').length > 1) return false",
+      "replace": "        if (document.querySelectorAll('[data-composer-card]').length > 1) { annDbgAttach('同屏多块 composer，歧义失败关闭（op64 护栏）'); return false }"
+    },
+    {
+      "id": "op69-attach-debug-scoped",
+      "group": "attach-debug",
+      "description": "attachAndSend：sessions.scope 返回 undefined 的早退补告警",
+      "find": "          var scoped = sessions.scope(current)\n          if (scoped === undefined) return false",
+      "replace": "          var scoped = sessions.scope(current)\n          if (scoped === undefined) { annDbgAttach('sessions.scope(current) 返回 undefined'); return false }"
+    },
+    {
+      "id": "op70-attach-debug-enter",
+      "group": "attach-debug",
+      "description": "attachAndSend：shouldAttachForEnter 判定不拼稿补告警",
+      "find": "          if (!shouldAttachForEnter(e, draft)) return false",
+      "replace": "          if (!shouldAttachForEnter(e, draft)) { annDbgAttach('shouldAttachForEnter 判定本次不拼稿'); return false }"
+    },
+    {
+      "id": "op71-attach-debug-command",
+      "group": "attach-debug",
+      "description": "attachAndSend：斜杠命令跳过拼稿路径补告警",
+      "find": "            showToast(t('toast.skipCommand'))\n            return false",
+      "replace": "            showToast(t('toast.skipCommand'))\n            annDbgAttach('isCommandDraft：斜杠命令不拼引用')\n            return false"
     }
   ],
   "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op63（17 条：斜杠技能拼稿 6、i18n 3、dispose 5、hover 控制器收敛 3），基座仍为 ab594842，无锚点改动；2026-09-18 追加 op64-op65b（3 条：composer 歧义失败关闭 + 2 处 rAF disposed 守卫），基座仍为 ab594842，无锚点改动",
