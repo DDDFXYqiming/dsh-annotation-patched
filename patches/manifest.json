@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 46,
-  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2：i18n 补齐；ab594842 基座全量重放字节级可复现，npm test 全绿",
+  "opsCount": 49,
+  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2：i18n 补齐 + hover 监听器收敛；ab594842 基座全量重放字节级可复现，npm test 全绿",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -348,9 +348,27 @@
       "description": "PATCH(2026-09-18-i18n)：op08 注入的编辑态删除按钮改走 t('edit.delete')，不再硬编码中文",
       "find": "            del.textContent = '删除引用'\n",
       "replace": "            del.textContent = t('edit.delete')\n"
+    },
+    {
+      "id": "op60-p0918-hover-chip-grace",
+      "description": "PATCH(2026-09-18-hover-controller)：makeReplyChip 去掉每芯片一份的 grace 定时器与 hide/keep 闭包",
+      "find": "        var item = items[num - 1]\n        var grace = null\n        function hide() {\n          if (grace !== null) clearTimeout(grace)\n          grace = setTimeout(function () { grace = null; tipLayer.textContent = '' }, 250)\n        }\n        function keep() {\n          if (grace !== null) { clearTimeout(grace); grace = null }\n        }\n",
+      "replace": "        var item = items[num - 1]\n        // PATCH(2026-09-18-hover-controller): 每枚芯片一份 grace 定时器 + 一对 tipLayer\n        // 监听器，而 tipLayer 是 fiber 级单例（只在 dispose 移除）——长会话里监听器与\n        // 闭包保留的 items 随芯片数线性累积。悬停宽限统一交给单例的\n        // scheduleHide/cancelHide（共享 hoverGrace），本处只管芯片自己的 mouseleave。\n"
+    },
+    {
+      "id": "op61-p0918-hover-chip-listeners",
+      "description": "PATCH(2026-09-18-hover-controller)：makeReplyChip 不再往 tipLayer 挂监听器，mouseleave 统一走单例 scheduleHide",
+      "find": "        chip.addEventListener('mouseleave', hide)\n        tipLayer.addEventListener('mouseenter', keep)\n        tipLayer.addEventListener('mouseleave', hide)\n",
+      "replace": "        chip.addEventListener('mouseleave', scheduleHide)\n"
+    },
+    {
+      "id": "op62-p0918-hover-bubble-listeners",
+      "description": "PATCH(2026-09-18-hover-controller)：attachBubbleTag 同上（去掉 bubbleGrace/bubbleHide/bubbleKeep 与两对 tipLayer 监听器）",
+      "find": "          var bubbleGrace = null\n          function bubbleHide() {\n            if (bubbleGrace !== null) clearTimeout(bubbleGrace)\n            bubbleGrace = setTimeout(function () {\n              bubbleGrace = null\n              tipLayer.textContent = ''\n            }, 250)\n          }\n          function bubbleKeep() {\n            if (bubbleGrace !== null) { clearTimeout(bubbleGrace); bubbleGrace = null }\n          }\n          tag.addEventListener('mouseleave', bubbleHide)\n          tipLayer.addEventListener('mouseenter', bubbleKeep)\n          tipLayer.addEventListener('mouseleave', bubbleHide)\n",
+      "replace": "          // PATCH(2026-09-18-hover-controller): 同 makeReplyChip——标签不再自带 grace\n          // 定时器与 tipLayer 监听器，统一走单例 scheduleHide（共享 hoverGrace）。\n          tag.addEventListener('mouseleave', scheduleHide)\n"
     }
   ],
-  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op49（编辑卡「删除引用」走 t() 双语字典）",
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op49（编辑卡「删除引用」走 t() 双语字典）；追加 op60-op62（悬停宽限收敛为单例控制器，tipLayer 不再累积监听器）",
   "retired": [
     {
       "id": "op04-p0814d-send-button",

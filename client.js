@@ -2244,20 +2244,9 @@ window.__ModuleLoader__.load({
             el.style.top = Math.max(8, top) + 'px'
             el.style.width = w2 + 'px'
           })
-          var bubbleGrace = null
-          function bubbleHide() {
-            if (bubbleGrace !== null) clearTimeout(bubbleGrace)
-            bubbleGrace = setTimeout(function () {
-              bubbleGrace = null
-              tipLayer.textContent = ''
-            }, 250)
-          }
-          function bubbleKeep() {
-            if (bubbleGrace !== null) { clearTimeout(bubbleGrace); bubbleGrace = null }
-          }
-          tag.addEventListener('mouseleave', bubbleHide)
-          tipLayer.addEventListener('mouseenter', bubbleKeep)
-          tipLayer.addEventListener('mouseleave', bubbleHide)
+          // PATCH(2026-09-18-hover-controller): 同 makeReplyChip——标签不再自带 grace
+          // 定时器与 tipLayer 监听器，统一走单例 scheduleHide（共享 hoverGrace）。
+          tag.addEventListener('mouseleave', scheduleHide)
         })(items)
         tag.__annotationItems = items
         bubble.appendChild(tag)
@@ -2414,14 +2403,10 @@ window.__ModuleLoader__.load({
         chip.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 6px;margin:0 2px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu,#2c2c2e);color:var(--dsw-alias-text-accent,#4c9aff);font-family:var(--dsw-font-family,system-ui);font-size:11px;font-weight:600;cursor:default;vertical-align:middle;'
         chip.textContent = 'Annotation ' + num
         var item = items[num - 1]
-        var grace = null
-        function hide() {
-          if (grace !== null) clearTimeout(grace)
-          grace = setTimeout(function () { grace = null; tipLayer.textContent = '' }, 250)
-        }
-        function keep() {
-          if (grace !== null) { clearTimeout(grace); grace = null }
-        }
+        // PATCH(2026-09-18-hover-controller): 每枚芯片一份 grace 定时器 + 一对 tipLayer
+        // 监听器，而 tipLayer 是 fiber 级单例（只在 dispose 移除）——长会话里监听器与
+        // 闭包保留的 items 随芯片数线性累积。悬停宽限统一交给单例的
+        // scheduleHide/cancelHide（共享 hoverGrace），本处只管芯片自己的 mouseleave。
         chip.addEventListener('mouseenter', function () {
           tipLayer.textContent = ''
           var el = document.createElement('div')
@@ -2459,9 +2444,7 @@ window.__ModuleLoader__.load({
           el.style.top = Math.max(8, top) + 'px'
           el.style.width = w2 + 'px'
         })
-        chip.addEventListener('mouseleave', hide)
-        tipLayer.addEventListener('mouseenter', keep)
-        tipLayer.addEventListener('mouseleave', hide)
+        chip.addEventListener('mouseleave', scheduleHide)
         return chip
       }
 

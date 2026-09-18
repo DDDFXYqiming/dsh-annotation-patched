@@ -328,6 +328,16 @@ test('回车拼稿不得吞掉用户已输入的文字', async () => {
   }
 })
 
+// 0.3.3 审查 MINOR-3：tipLayer 是 fiber 级单例，每枚芯片/每个气泡标签再挂一对
+// mouseenter/mouseleave 会随数量无界累积；现在悬停宽限统一由单例控制器持有。
+test('tipLayer 监听器只注册一对（不随芯片与标签累积）', () => {
+  const source = readFileSync(resolve(root, 'client.js'), 'utf8')
+  const n = (source.match(/tipLayer\.addEventListener/g) || []).length
+  assert.equal(n, 2, 'tipLayer 上只允许 showChipTip 处那对 keep/hide 监听器')
+  assert.doesNotMatch(source, /var bubbleGrace = null/)
+  assert.doesNotMatch(source, /chip\.addEventListener\('mouseleave', hide\)/)
+})
+
 // 0.3.3 审查 MINOR-1：编辑态删除按钮曾硬编码中文，en 界面下显示中文。
 test('编辑卡删除按钮文案走 t() 双语字典', () => {
   const source = readFileSync(resolve(root, 'client.js'), 'utf8')
