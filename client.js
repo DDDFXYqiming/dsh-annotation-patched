@@ -2462,7 +2462,13 @@ window.__ModuleLoader__.load({
        *  增量扫描(只扫助手行), 代替逐批全文档 decorateAll。 */
       var lastAssistantDecorate = 0
       var assistantDecorateTimer = null
+      // PATCH(2026-09-18-dispose): fiber 卸载守卫。assistantDecorateTimer 是 ≤500ms 的
+      // 拖尾限流，dispose 里不摘就会在卸载后把芯片插进宿主助手行——tipLayer 已被
+      // remove，芯片 hover 无提示，且它的 data-annotation-reply-chip 标记会让重载后的
+      // 新 fiber 跳过该行（热重载后个别回复行芯片失效）。decorateAll 兜底轮询同理。
+      var disposed = false
       function scheduleAssistantDecorate() {
+        if (disposed) return
         var now = performance.now()
         if (now - lastAssistantDecorate >= 500) {
           lastAssistantDecorate = now
@@ -2478,6 +2484,7 @@ window.__ModuleLoader__.load({
       }
 
       function decorateAssistantAnnotations() {
+        if (disposed) return
         var rows = assistantRows()
         for (var i = 0; i < rows.length; i++) {
           var el = rows[i]
@@ -2593,6 +2600,7 @@ window.__ModuleLoader__.load({
       /** 全局轮询装饰：找所有「携带引用块但未装饰」的用户气泡 → 隐藏引用块 + 贴标签。
        *  不依赖发送事件链：异步渲染、刷新后的历史消息都能被覆盖。 */
       function decorateAll() {
+        if (disposed) return
         try {
           var rows = allMessageRows()
           for (var i = rows.length - 1; i >= 0; i--) {
@@ -2703,6 +2711,9 @@ window.__ModuleLoader__.load({
 
       // ---------- 清理 ----------
       return function () {
+        // PATCH(2026-09-18-dispose): 守卫先置位再逐项摘除——卸载期间任何 observer
+        // 尾批、rAF 尾帧回调都必须立刻停手。
+        disposed = true
         clearSettle()
         document.removeEventListener('selectionchange', onSelection)
         document.removeEventListener('pointerdown', onDocPointerDown, true)
@@ -2736,6 +2747,21 @@ window.__ModuleLoader__.load({
         if (typeof localeUnsub === 'function') localeUnsub()
         if (decoTimer !== null) { clearTimeout(decoTimer); decoTimer = null }
         decoDeadline = 0
+        // PATCH(2026-09-18-dispose): 补齐短定时器句柄（toast 3s／hover 宽限 250ms／
+        // 芯片装饰拖尾 ≤500ms）。toast 的定时器摘掉后必须顺手删它自己的节点，否则
+        // 提示条永久留在 body 上；in-flight 的技能清单请求用 abort 取消。
+        if (toastTimer !== null) { clearTimeout(toastTimer); toastTimer = null }
+        var strayToast = document.querySelector('[data-annotation-toast]')
+        if (strayToast !== null) strayToast.remove()
+        if (hoverGrace !== null) { clearTimeout(hoverGrace); hoverGrace = null }
+        if (assistantDecorateTimer !== null) {
+          clearTimeout(assistantDecorateTimer)
+          assistantDecorateTimer = null
+        }
+        if (skillNamesAbort !== null) {
+          skillNamesAbort.abort()
+          skillNamesAbort = null
+        }
         chipLayer.remove()
         tipLayer.remove()
         host.remove()

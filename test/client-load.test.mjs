@@ -430,6 +430,41 @@ test('技能清单未就绪或拉取失败时保守跳过（不回归 issue #20�
   }
 })
 
+// 回归（0.3.3 审查 MINOR-2）：assistantDecorateTimer 是 ≤500ms 的拖尾限流，
+// dispose 不摘它，卸载后仍会把芯片插进宿主助手行——tipLayer 已 remove 成死芯片，
+// 且 data-annotation-reply-chip 标记会让重载后的新 fiber 跳过该行（热重载芯片失效）。
+test('dispose 后拖尾装饰定时器不再改动宿主 DOM', async () => {
+  const dom = createDom()
+  const { window } = dom
+  const doc = window.document
+  doc.body.innerHTML = [
+    '<div data-chat-flow>',
+    '  <div data-time-hover-root><p id="r1">idle</p></div>',
+    '  <div data-time-hover-root><p id="r2">idle</p></div>',
+    '</div>',
+  ].join('')
+  const { exported } = loadClient(window)
+  const cleanup = exported.apply(makeCtx())
+  // 先让限流窗口过期（lastAssistantDecorate 初值 0），下一次变更才走立即分支。
+  await wait(600)
+  doc.getElementById('r1').firstChild.nodeValue = 'Annotation 1: one'
+  await wait(50)
+  assert.equal(
+    doc.getElementById('r1').querySelectorAll('[data-annotation-reply-chip]').length,
+    1, '前置条件：装饰本身工作正常')
+  // 紧接着 500ms 窗口内的第二次变更只会落到拖尾定时器（≤500ms 后触发）→ 立刻卸载。
+  doc.getElementById('r2').firstChild.nodeValue = 'Annotation 2: two'
+  await wait(30)
+  cleanup()
+  await wait(800)
+  assert.equal(
+    doc.getElementById('r2').querySelectorAll('[data-annotation-reply-chip]').length,
+    0, '卸载后不得再往宿主行插芯片')
+  // 卸载后 toast 节点也必须消失（定时器摘掉时顺手删节点）。
+  assert.equal(doc.querySelector('[data-annotation-toast]'), null)
+  window.close()
+})
+
 // 0.3.3 审查 MINOR-3：tipLayer 是 fiber 级单例，每枚芯片/每个气泡标签再挂一对
 // mouseenter/mouseleave 会随数量无界累积；现在悬停宽限统一由单例控制器持有。
 test('tipLayer 监听器只注册一对（不随芯片与标签累积）', () => {
