@@ -1159,6 +1159,8 @@ window.__ModuleLoader__.load({
         anchorRaf = true
         requestAnimationFrame(function () {
           anchorRaf = false
+          // PATCH(2026-09-18-team-sessions): 卸载后不再装饰（renderMarkers/updateChip）
+          if (disposed) return
           if (ui.quotes.length > 0) renderMarkers()
           updateChip()
           if (ui.mode === 'editing' && ui.el !== null) positionEditor(ui.el, ui.pos.left, ui.pos.top)
@@ -1831,6 +1833,13 @@ window.__ModuleLoader__.load({
       function attachAndSend(e) {
         var current = currentSessionId()
         if (current === undefined) return false
+        // PATCH(2026-09-18-team-sessions): 同屏可能出现多块 composer——Agent Team 面板把
+        // teammate 换进主视图，右侧栏 ui-subagent 又渲染同一套 [data-composer-card]（对
+        // continuable 子代理还可写）。而 currentSessionId() 只认主视图，宿主 DOM 又没有
+        // 把 composer 卡片绑定到会话的标记（无 data-session/data-conversation），无法判定
+        // 用户实际在敲哪一块。歧义时失败关闭：不拼稿、原样交回宿主发送——宁可少一次引用，
+        // 也不把引用块写进错误会话的草稿。
+        if (document.querySelectorAll('[data-composer-card]').length > 1) return false
         try {
           var scoped = sessions.scope(current)
           if (scoped === undefined) return false
@@ -1897,7 +1906,9 @@ window.__ModuleLoader__.load({
         var input = document.querySelector('[data-composer-card] [data-composer-input]')
         if (!(input instanceof HTMLElement) || !input.isContentEditable) return
         requestAnimationFrame(function () {
-          if (!input.isConnected) return
+          // PATCH(2026-09-18-team-sessions): 插件自身卸载后 composer 仍 connected，
+          // 原守卫拦不住——会 focus + selectAllChildren 改宿主焦点/选区。补 disposed 守卫。
+          if (disposed || !input.isConnected) return
           input.focus({ preventScroll: true })
           var selection = window.getSelection()
           if (selection !== null) {

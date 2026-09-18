@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.5] - 2026-09-18
+
+修复（Agent Teams 多会话同屏 + rAF 泄漏）
+- **引用拼稿不再可能写进错误会话**（op64，MAJOR）：开启官方 `dsh-experimental-agent-team-profile` / `-web-profile` 后，Team 面板可把 teammate 会话换进主视图，而右侧栏 `ui-subagent` 用 `renderFactorySlot('conversation.content', {variant:'embedded'})` 渲染**同一套** `[data-composer-card]`（对 continuable 子代理还是可写的），于是同屏出现多块 composer。`currentSessionId()` 只认主视图（`uiWorkspace.mainReference`），而宿主 DOM 没有把 composer 卡片绑定到会话的标记（无 `data-session`/`data-conversation`），**无法判定用户实际在敲哪一块**。因此 `attachAndSend` 在 composer 数 >1 时失败关闭：不拼稿、原样交回宿主发送——宁可少一次引用，也不把引用块写进错误会话的草稿。闸放在公共落点，一次覆盖回车与按钮两条发送路径。
+- **两处 rAF 补 `disposed` 守卫**（op65 / op65b）：`focusComposer` 与 `onLayoutChange` 的 rAF 回调此前未守卫（op55-58 只覆盖了三个装饰函数）。插件自身卸载后 composer 仍 `connected`，原 `isConnected` 守卫拦不住，会 `focus` + `selectAllChildren` 改宿主焦点/选区。
+- 已知未做：引用编号（`.dsh-ann-num`，z 940）与 chip/tip（1150/1160）仍高于 Team 面板（z-index 110），面板打开时可能遮挡其顶部并吃掉点击。压低层级会牵动本插件与宿主弹层的既有相对关系（见 2026-08-14e 的 z-index 取舍注释），正解需 `elementFromPoint` 遮挡判定 + 真浏览器实测，本轮未做。
+- 验证：63 条 op 逆序重放回基座每条恰好命中 1 次、正序重放与产物字节级一致（141,624 B）；`npm run check` 0；`npm test` 全绿。
+
 ## [0.3.4] - 2026-09-18
 
 ### 修复（实盘缺陷：技能斜杠命令带不走引用）
