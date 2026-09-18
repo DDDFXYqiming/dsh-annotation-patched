@@ -180,6 +180,7 @@ window.__ModuleLoader__.load({
           editTitle: '编辑引用',
           placeholder: '写下引用…（可留空，保存后仅标记原文）',
           save: '保存引用',
+          delete: '删除引用',
         },
         common: { cancel: '取消' },
         error: { noSelection: '没有选中的内容' },
@@ -217,6 +218,7 @@ window.__ModuleLoader__.load({
           editTitle: 'Edit annotation',
           placeholder: 'Write a note… (optional; saving only marks the passage)',
           save: 'Save annotation',
+          delete: 'Delete annotation',
         },
         common: { cancel: 'Cancel' },
         error: { noSelection: 'No text selected' },
@@ -1455,7 +1457,7 @@ window.__ModuleLoader__.load({
             del.type = 'button'
             del.className = 'dsh-ann-cancel'
             del.style.cssText = 'color:#ff8a8a;border-color:rgba(255,107,107,.4);'
-            del.textContent = '删除引用'
+            del.textContent = t('edit.delete')
             del.addEventListener('click', function () {
               removeQuote(ui.editingId)
               closeToolbar()

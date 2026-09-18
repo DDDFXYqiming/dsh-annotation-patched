@@ -328,6 +328,15 @@ test('回车拼稿不得吞掉用户已输入的文字', async () => {
   }
 })
 
+// 0.3.3 审查 MINOR-1：编辑态删除按钮曾硬编码中文，en 界面下显示中文。
+test('编辑卡删除按钮文案走 t() 双语字典', () => {
+  const source = readFileSync(resolve(root, 'client.js'), 'utf8')
+  assert.doesNotMatch(source, /del\.textContent = '删除引用'/)
+  assert.match(source, /del\.textContent = t\('edit\.delete'\)/)
+  assert.match(source, /delete: '删除引用',/)
+  assert.match(source, /delete: 'Delete annotation',/)
+})
+
 test('node half exports plugin identity', async () => {
   const mod = await import(pathToFileURL(resolve(root, 'index.mjs')).href)
   assert.equal(mod.default.name, pkg.name)
