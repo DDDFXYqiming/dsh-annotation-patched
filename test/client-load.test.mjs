@@ -19,6 +19,16 @@ function createDom() {
     window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(Date.now()), 0)
     window.cancelAnimationFrame = (id) => window.clearTimeout(id)
   }
+  // jsdom 不实现 ResizeObserver：插件 updateChip 里的 observeChipComposer 会抛
+  // TypeError（监听器异常被 jsdom 吞掉），chip 文案就永远停不住。补个空实现，
+  // 让「引用保留」这类断言能真的读到 chip 内容。
+  if (typeof window.ResizeObserver !== 'function') {
+    window.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
   if (typeof window.MutationObserver !== 'function') {
     window.MutationObserver = class {
       observe() {}
@@ -61,6 +71,9 @@ function loadClient(window) {
     setInterval: window.setInterval.bind(window),
     clearInterval: window.clearInterval.bind(window),
     URLSearchParams: window.URLSearchParams,
+    // 技能清单请求要 AbortController；芯片装饰限流要 performance.now()（宿主环境两者都在）。
+    AbortController: typeof window.AbortController === 'function' ? window.AbortController : undefined,
+    performance: typeof window.performance !== 'undefined' ? window.performance : { now: () => Date.now() },
     localStorage: window.localStorage,
     console,
     Date,
@@ -87,11 +100,23 @@ function loadClient(window) {
  * @param {object} [snapshot] 会话列表快照；缺省模拟老宿主（带 current）
  * @param {object} [workspace] uiWorkspace 服务（新宿主的视图层当前会话）
  * @param {string} [initialDraft] composer 里已有的草稿（模拟用户先打字再引用）
+ * @param {object} [opts] {inputState} 覆盖 composer 输入机快照（phase/claim）；
+ *                        {services} 额外可选服务（如 remote.skills 假服务）；
+ *                        {locale} locale 服务快照
  */
-function makeCtx(drafts, snapshot, workspace, initialDraft) {
+function makeCtx(drafts, snapshot, workspace, initialDraft, opts) {
   const sink = Array.isArray(drafts) ? drafts : []
+  const o = opts || {}
   return {
-    get(name) { return name === 'uiWorkspace' ? workspace : undefined },
+    get(name) {
+      if (name === 'uiWorkspace') return workspace
+      const extra = o.services || {}
+      return Object.prototype.hasOwnProperty.call(extra, name) ? extra[name] : undefined
+    },
+    locale: {
+      getSnapshot() { return o.locale ?? { active: 'zh' } },
+      subscribe() { return () => {} },
+    },
     sessions: {
       list: {
         getSnapshot() { return snapshot ?? { current: 'sess-test' } },
@@ -104,7 +129,7 @@ function makeCtx(drafts, snapshot, workspace, initialDraft) {
         for() {
           return {
             state: {
-              getSnapshot() { return { draft: initialDraft ?? '' } },
+              getSnapshot() { return { draft: initialDraft ?? '', ...(o.inputState || {}) } },
               subscribe() { return () => {} },
             },
             setDraft(text) { sink.push(text) },
@@ -126,6 +151,9 @@ test('client bundle registers ModuleLoader id and exports', () => {
     assert.equal(exported.inject[0], 'sessions')
     assert.equal(exported.inject[1], 'conversation')
     assert.equal(exported.inject[2], 'locale')
+    // remote.skills（技能清单）刻意不写进 inject：该服务由宿主按命名空间动态挂载，
+    // 硬注入会让整个插件在清单缺席时不加载；插件内改用 ctx.get 可选查询。
+    assert.equal(exported.inject.indexOf('remote.skills'), -1)
     assert.equal(typeof exported.apply, 'function')
   } finally {
     dom.window.close()
@@ -159,13 +187,14 @@ test('session changes clear pending decoration and polling is bounded', () => {
 })
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+const J4 = (parts) => parts.join('\n')
 
 /**
  * 走一遍真实交互链：选区 → 工具条「引用」→ 保存 → 在 composer 上按回车。
  * 返回 setDraft 收到的草稿列表（长度 1 = 引用块成功随消息拼稿）。
  * @param {Document} doc @param {any} window @param {string} composerHtml 输入面节点
  */
-async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspace, initialDraft) {
+async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspace, initialDraft, opts) {
   doc.body.innerHTML = [
     '<div data-chat-flow>',
     '  <div data-chat-flow-kind="assistant-step" data-chat-anchor-key="a1">',
@@ -198,7 +227,7 @@ async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspa
 
   const drafts = []
   const { exported } = loadClient(window)
-  const cleanup = exported.apply(makeCtx(drafts, snapshot, workspace, initialDraft))
+  const cleanup = exported.apply(makeCtx(drafts, snapshot, workspace, initialDraft, opts))
   try {
     doc.dispatchEvent(new window.Event('selectionchange'))
     await wait(320)            // settle 定时器 250ms
@@ -207,13 +236,20 @@ async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspa
     quote.click()              // 进入编辑
     await wait(0)
     doc.querySelector('.dsh-ann-action').click()   // 保存引用
-    await wait(0)
+    // 技能清单是在保存引用时异步预热的（回车判定同步读缓存），给它一拍。
+    await wait(20)
     const editor = doc.querySelector('[data-composer-card] textarea, [data-composer-card] [contenteditable="true"]')
     editor.dispatchEvent(new window.KeyboardEvent('keydown', {
       key: 'Enter', bubbles: true, cancelable: true,
     }))
     await wait(0)
-    return drafts
+    // chip / toast 都挂在插件自有层上，cleanup 会摘掉，必须在 try 内读。
+    const toastEl = doc.querySelector('[data-annotation-toast]')
+    return {
+      drafts,
+      toast: toastEl !== null ? toastEl.textContent : '',
+      chip: doc.querySelector('[data-annotation-chip]').textContent,
+    }
   } finally {
     cleanup()
   }
@@ -222,7 +258,7 @@ async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspa
 test('Enter attaches the block on a Lexical contenteditable composer', async () => {
   const dom = createDom()
   try {
-    const drafts = await collectDraftsOnEnter(
+    const { drafts } = await collectDraftsOnEnter(
       dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>')
     assert.equal(drafts.length, 1, '新 composer（contenteditable）回车必须拼入引用块')
     assert.match(drafts[0], /quoted passage/)
@@ -236,7 +272,7 @@ test('Enter attaches the block on a Lexical contenteditable composer', async () 
 test('Enter attaches the block on a legacy textarea composer (backward compat)', async () => {
   const dom = createDom()
   try {
-    const drafts = await collectDraftsOnEnter(dom.window.document, dom.window, '<textarea></textarea>')
+    const { drafts } = await collectDraftsOnEnter(dom.window.document, dom.window, '<textarea></textarea>')
     assert.equal(drafts.length, 1, '老 composer（textarea）回车仍须拼入引用块')
     assert.match(drafts[0], /quoted passage/)
   } finally {
@@ -250,7 +286,7 @@ test('0.1.6：快照无 current 时回退 localStorage[dsh.sessions.current]', a
   const dom = createDom()
   try {
     dom.window.localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: 'sess-ls' }))
-    const drafts = await collectDraftsOnEnter(
+    const { drafts } = await collectDraftsOnEnter(
       dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
       { ids: ['sess-ls'], byId: {}, phase: 'ready' })
     assert.equal(drafts.length, 1, '快照无 current 时仍须把引用块拼进草稿')
@@ -263,7 +299,7 @@ test('0.1.6：快照无 current 时回退 localStorage[dsh.sessions.current]', a
 test('0.1.6：快照无 current 时回退 uiWorkspace 视图层当前会话', async () => {
   const dom = createDom()
   try {
-    const drafts = await collectDraftsOnEnter(
+    const { drafts } = await collectDraftsOnEnter(
       dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
       { ids: ['sess-ui'], byId: {}, phase: 'ready' },
       { mainReference: { sessionId: 'sess-ui' }, selection: { getSnapshot: () => ({ sessionId: 'sess-ui' }) } })
@@ -280,7 +316,7 @@ test('0.1.6：快照无 current 时回退 uiWorkspace 视图层当前会话', as
 test('回车拼稿不得吞掉用户已输入的文字', async () => {
   const dom = createDom()
   try {
-    const drafts = await collectDraftsOnEnter(
+    const { drafts } = await collectDraftsOnEnter(
       dom.window.document, dom.window, '<div contenteditable="true" role="textbox"></div>',
       undefined, undefined, '帮我把这段代码改成 TypeScript')
     assert.equal(drafts.length, 1, '回车必须拼稿')
