@@ -1,3 +1,6 @@
+# loader entry id 带 -patched 后缀：与上游包的 id `dsh-annotation` 区分，
+# 避免两者同时安装时撞出 duplicate loader entry（宿主启动崩溃）。
+# 注意：改了 id 之后，任何按旧 id 写的 profile 层覆盖条目都要同步改名。
 - insert:
-    - id: dsh-annotation
+    - id: dsh-annotation-patched
       name: '@dsh-external/dsh-annotation-patched'
