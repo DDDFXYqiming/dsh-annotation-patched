@@ -88,7 +88,9 @@ for (const op of manifest.ops) {
     failures.push(`[op ${op.id}] 锚文本命中 ${n} 次（要求恰好 1 次）— ${op.description}`)
     continue
   }
-  content = content.replace(op.find, op.replace)
+  // split/join 而非 String.replace：字符串模式下 replace 文本里的 $& / $' / $
+  // / $1 等特殊序列会被静默展开成匹配内容（术语改名步骤同理，见上）。
+  content = content.split(op.find).join(op.replace)
   applied++
 }
 console.log(`[ops] 应用 ${applied}/${manifest.ops.length}${failures.length ? `，失配 ${failures.length} 条` : ''}`)
