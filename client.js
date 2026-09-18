@@ -1726,6 +1726,92 @@ window.__ModuleLoader__.load({
         return draft.trimStart().charAt(0) === '/'
       }
 
+      // PATCH(2026-09-18-skill-catalog): 「以 / 开头一律当宿主命令」的守卫过宽——技能的
+      // /name 手势不是宿主命令。宿主 dsh-tool-skill 的 invokedSkillNames 用
+      // SKILL_GESTURE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g 扫描用户消息的每个
+      // 文本块，引用块追加在命令之后不影响它识别；宿主输入机也只在
+      // draft.trim().startsWith("/") 时才 adjudicate，未被认领（claim）的斜杠草稿最终
+      // 原样作为普通消息发出（onAdjudicated → detachedEffects，token 留在文本里），
+      // 技能照常加载。真命令（/goal、/model 等）与被 '/' 菜单认领的草稿依旧放行。
+      // 清单取自 remote.skills，与官方 dsh-client-ui-skill 的 '/' 数据源同一个服务。
+      // 该服务由 dsh-api-gateway 按命名空间动态挂载（new Service(ctx, 'remote.'+ns)），
+      // 未连接或未挂载时压根不存在，所以用 ctx.get 可选查询而不是写进 exports.inject：
+      // 硬注入会让整个引用插件在清单缺席时不加载（cordis「Required: the plugin does
+      // not load while the service is absent」），代价远大于「这一条不带引用」的保守回退。
+      var skillNames = null
+      var skillNamesAt = 0
+      var skillNamesFetching = false
+      var skillNamesAbort = null
+      var SKILL_TTL_MS = 60000
+      // token 语法与宿主 SKILL_GESTURE 一致：这种形态之外宿主根本不认作技能手势。
+      var SKILL_TOKEN = /^\s*\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/
+
+      /** 拉取本会话可调用的技能名（异步、TTL 内不重复请求、失败保留旧缓存）。
+       *  卸载安全由 disposer 里的 skillNamesAbort 负责（op59）：回调只会写闭包内
+       *  的两个变量，不碰 DOM，故这里不再引用 dispose 组的 disposed 标志。 */
+      function refreshSkillNames() {
+        if (skillNamesFetching) return
+        if (skillNames !== null && Date.now() - skillNamesAt < SKILL_TTL_MS) return
+        var remote
+        try {
+          remote = typeof ctx.get === 'function' ? ctx.get('remote.skills') : undefined
+        } catch (_) { return }
+        if (remote === null || remote === undefined || typeof remote.list !== 'function') return
+        var sessionId = currentSessionId()
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        var ctrl = typeof AbortController === 'function' ? new AbortController() : null
+        skillNamesFetching = true
+        skillNamesAbort = ctrl
+        var done = function () {
+          skillNamesFetching = false
+          if (skillNamesAbort === ctrl) skillNamesAbort = null
+        }
+        try {
+          Promise.resolve(
+            remote.list({ sessionId: sessionId }, ctrl === null ? undefined : ctrl.signal),
+          ).then(function (res) {
+            done()
+            var value = res !== null && res !== undefined && res.ok === true ? res.value : undefined
+            var list = value !== null && value !== undefined ? value.skills : undefined
+            if (!Array.isArray(list)) return
+            var next = []
+            for (var i = 0; i < list.length; i++) {
+              var nm = list[i] !== null && list[i] !== undefined ? list[i].name : undefined
+              if (typeof nm === 'string' && nm !== '' && next.indexOf(nm) === -1) next.push(nm)
+            }
+            skillNames = next
+            skillNamesAt = Date.now()
+            console.log('[annotation] 技能清单就绪（' + next.length + ' 个）')
+          }, function () { done() })
+        } catch (err) {
+          done()
+          console.warn('[annotation] 技能清单拉取异常：', err)
+        }
+      }
+
+      /** 斜杠草稿能否携带引用：命中技能清单返回技能名，否则 null（= 原样放行）。 */
+      function slashSkillName(st, draft) {
+        if (st !== null && st !== undefined) {
+          // 被 '/' 菜单认领的命令（beginCommand）或输入机正忙：草稿归宿主，不抢。
+          if (st.claim !== null && st.claim !== undefined) return null
+          if (st.phase === 'claimed' || st.phase === 'submitting' || st.phase === 'adjudicating') return null
+        }
+        var m = SKILL_TOKEN.exec(draft)
+        if (m === null) return null
+        // 清单还没回来：预热一次并保守放行（下一条消息即可携带）。
+        if (skillNames === null) { refreshSkillNames(); return null }
+        return skillNames.indexOf(m[1]) !== -1 ? m[1] : null
+      }
+
+      /** 剥掉「后置追加未遂」的纯引用块（headOnly + formatOnly，无「提问：」标记）。
+       *  0.3.2 的补剥只锚草稿头部，覆盖不到技能拼稿产生的尾部形态。 */
+      function stripTrailingBlock(draft) {
+        return draft.replace(
+          /\n*(?:我引用了以下|I annotated the following)[\s\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format "Annotation N: …".)\n*/g,
+          '',
+        )
+      }
+
       /** 从草稿中剥离残留的旧引用块（"我引用了以下…提问：" / "I annotated the
        *  following…Ask:" 整块），保留用户自己的输入。残留来源：上次 setDraft 后
        *  提交失败/未触发，旧块留在草稿里而引用集已变——若不剥离，旧块会随下一条
@@ -1755,7 +1841,20 @@ window.__ModuleLoader__.load({
           // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，
           // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会
           // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。
+          // PATCH(2026-09-18-skill-catalog): 例外是技能手势——/name 的参数是自由文本，
+          // 引用块后置追加既不破坏 token 前缀（宿主服务端按全文扫描手势识别），也不会
+          // 被当作宿主命令参数消费；只有首 token 命中技能清单才拼，未命中维持原行为。
           if (isCommandDraft(draft)) {
+            var skillName = slashSkillName(st, draft)
+            if (skillName !== null) {
+              // 先剥残留（头部标记块 + 尾部纯引用块），再把 headOnly 纯引用块（无
+              // 「提问：」标记）追加到命令之后——命令文本自身保持原样含 token 前缀。
+              var cmd = stripTrailingBlock(stripOldBlock(draft)).replace(/\s+$/, '')
+              shell.setDraft(cmd + '\n\n' + buildBlock(false))
+              annotationAttached = true
+              console.log('[annotation] 斜杠技能 ' + skillName + ' 已随消息追加引用（' + ui.quotes.length + ' 条）')
+              return true
+            }
             showToast(t('toast.skipCommand'))
             return false
           }
@@ -1948,6 +2047,9 @@ window.__ModuleLoader__.load({
       document.addEventListener('input', onComposerInput, true)
 
       function updateChip() {
+        // PATCH(2026-09-18-skill-catalog): 引用集一变（保存成功／删除／按会话恢复）就
+        // 预热技能清单——回车判定是同步的，等按下回车才去拉清单这一条必然错过。
+        if (ui.quotes.length > 0) refreshSkillNames()
         var card = document.querySelector('[data-composer-card]')
         observeChipComposer(ui.quotes.length > 0 ? card : null)
         if (ui.quotes.length === 0) {
@@ -2137,7 +2239,47 @@ window.__ModuleLoader__.load({
             var idx = full.lastIndexOf(markers[p])
             if (idx !== -1) { marker = idx; markerStr = markers[p] }
           }
-          if (marker === -1) return false
+          if (marker === -1) {
+            // PATCH(2026-09-18-skill-catalog): 技能手势的引用块是「追加在命令之后」的
+            // headOnly 形态（无「提问：」标记）：既不在 annotationOnly 的开头判据里，
+            // 也没有 marker 可切。这里按「\n\n + headOnly 起、formatOnly 收尾」定位，
+            // 切掉尾部块并保留命令文本——否则气泡会被裸协议文本占满，「引用 ×N」标签
+            // 也贴不上（items 优先取发送暂存，历史行由 parseItemsFromBubble 兜底）。
+            var cut = -1
+            var cutLangs = ['zh', 'en']
+            for (var ci = 0; ci < cutLangs.length; ci++) {
+              var tailHead = '\n\n' + dictVal(cutLangs[ci], 'block.headOnly')
+              var at = full.lastIndexOf(tailHead)
+              if (at === -1) continue
+              if (!full.trimEnd().endsWith(dictVal(cutLangs[ci], 'block.formatOnly'))) continue
+              cut = at
+              break
+            }
+            if (cut === -1) return false
+            var cpos = 0
+            var cutDone = false
+            for (var cj = 0; cj < nodes.length && !cutDone; cj++) {
+              var clen = (nodes[cj].nodeValue || '').length
+              if (cut < cpos + clen) {
+                nodes[cj].nodeValue = (nodes[cj].nodeValue || '').slice(0, cut - cpos).replace(/\s+$/, '')
+                for (var ck = nodes.length - 1; ck > cj; ck--) {
+                  if (nodes[ck].parentNode !== null) nodes[ck].parentNode.removeChild(nodes[ck])
+                }
+                cutDone = true
+              }
+              cpos += clen
+            }
+            if (!cutDone) return false
+            var cutBubble = row.querySelector('[class*="bubble"]')
+            if (cutBubble !== null) {
+              var cEmpties = cutBubble.querySelectorAll('div,span,p')
+              for (var ce = 0; ce < cEmpties.length; ce++) {
+                var cel = cEmpties[ce]
+                if (cel.parentNode !== null && (cel.textContent || '').trim() === '') cel.remove()
+              }
+            }
+            return true
+          }
           // 连同分隔标记一起切掉，保留其后的问题。
           var skip = markerStr.length
           // 定位到具体文本节点。
@@ -2533,11 +2675,15 @@ window.__ModuleLoader__.load({
       // ---------- 待发送引用按会话恢复 ----------
       var lastSessionId = currentSessionId()
       ui.quotes = readPendingQuotes(lastSessionId)
+      // PATCH(2026-09-18-skill-catalog): fiber 启动即预热技能清单（异步、失败静默）。
+      refreshSkillNames()
       var unsub = sessions.list.subscribe(function () {
         var cur = currentSessionId()
         if (cur === lastSessionId) return
         writePendingQuotes(lastSessionId)
         lastSessionId = cur
+        // PATCH(2026-09-18-skill-catalog): 技能清单是按会话拉的，切会话必须重取。
+        refreshSkillNames()
         if (ui.mode !== 'closed') closeToolbar()
         ui.quotes = readPendingQuotes(cur)
         annotationAttached = false

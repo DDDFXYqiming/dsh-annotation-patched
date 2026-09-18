@@ -328,6 +328,108 @@ test('回车拼稿不得吞掉用户已输入的文字', async () => {
   }
 })
 
+// ---------- 斜杠技能调用携带引用（2026-09-18 实盘 bug 回归） ----------
+// 旧守卫把任何以 / 开头的草稿一律当宿主命令跳过拼稿，表现为「选中引用 +
+// /human-writing 全部修复」回车后引用永远发不出去、chip 常驻「1 条引用」。
+// 技能手势的参数是自由文本，引用块后置追加既不破坏 token 前缀（宿主服务端
+// invokedSkillNames 全文扫描 SKILL_GESTURE 识别手势），也不会被并入宿主命令参数。
+const skillRemote = (names) => ({
+  list: async () => ({ ok: true, value: { skills: names.map((n) => ({ name: n })) } }),
+})
+const SKILL_SERVICES = () => ({ 'remote.skills': skillRemote(['human-writing', 'ppt-master']) })
+const EDITOR = '<div contenteditable="true" role="textbox"></div>'
+
+test('斜杠技能调用随消息携带引用块（引用后置，token 前缀保留）', async () => {
+  const dom = createDom()
+  try {
+    const { drafts } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, '/human-writing 全部修复', { services: SKILL_SERVICES() })
+    assert.equal(drafts.length, 1, '技能手势必须拼稿')
+    const d = drafts[0]
+    assert.ok(d.startsWith('/human-writing 全部修复'), '命令 token 前缀必须原样保留：' + JSON.stringify(d.slice(0, 40)))
+    assert.ok(d.indexOf('我引用了以下') > d.indexOf('/human-writing'), '引用块必须追加在命令之后')
+    assert.match(d, /quoted passage/, '引用原文要随消息发出')
+    assert.doesNotMatch(d, /提问：/, '技能参数区不带「提问：」标记（headOnly 纯引用块）')
+    assert.match(d, /请按「Annotation N：…」的格式，逐条回应以上引用。/, '块尾格式指令要在')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('非技能的斜杠命令仍跳过拼稿（toast + 引用保留待下一条）', async () => {
+  const dom = createDom()
+  try {
+    const { drafts, toast, chip } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, '/goal 把引用里的段落讲清楚', { services: SKILL_SERVICES() })
+    assert.equal(drafts.length, 0, '清单里没有的 token 不得拼稿（issue #20 行为保持）')
+    assert.match(toast, /未拼入引用/, '要给出跳过提示')
+    assert.equal(chip, '1条引用', '引用必须保留，不被静默丢弃')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('技能草稿尾部残留旧引用块时重发只拼一块', async () => {
+  const dom = createDom()
+  try {
+    const residual = J4([
+      '/human-writing 全部修复',
+      '',
+      '我引用了以下内容，请逐条回应：',
+      '',
+      '1. 过期的旧内容',
+      '',
+      '请按「Annotation N：…」的格式，逐条回应以上引用。',
+    ])
+    const { drafts } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, residual, { services: SKILL_SERVICES() })
+    assert.equal(drafts.length, 1, '残留块不得阻塞拼稿')
+    const d = drafts[0]
+    assert.equal((d.match(/我引用了以下/g) || []).length, 1, '不得双拼引用块：' + JSON.stringify(d))
+    assert.doesNotMatch(d, /过期的旧内容/, '过期残留块必须剥掉')
+    assert.match(d, /quoted passage/, '新引用块要在')
+    assert.ok(d.startsWith('/human-writing 全部修复'), '命令前缀保留')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('宿主已认领命令（claim / phase 忙）时不抢拼稿', async () => {
+  const dom = createDom()
+  try {
+    const { drafts } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, '/human-writing 全部修复', {
+        services: SKILL_SERVICES(),
+        inputState: { phase: 'claimed', claim: { name: 'human-writing', token: '/human-writing ' } },
+      })
+    assert.equal(drafts.length, 0, 'claim 在手时草稿归宿主输入机')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('技能清单未就绪或拉取失败时保守跳过（不回归 issue #20）', async () => {
+  for (const services of [
+    {},                                                       // 服务未挂载（remote.skills 不存在）
+    { 'remote.skills': { list: async () => { throw new Error('offline') } } },  // 拉取失败
+  ]) {
+    const dom = createDom()
+    try {
+      const { drafts, chip } = await collectDraftsOnEnter(
+        dom.window.document, dom.window, EDITOR,
+        undefined, undefined, '/human-writing 全部修复', { services })
+      assert.equal(drafts.length, 0, '拿不到清单时保持上游行为')
+      assert.equal(chip, '1条引用', '引用保留待下一条')
+    } finally {
+      dom.window.close()
+    }
+  }
+})
+
 // 0.3.3 审查 MINOR-3：tipLayer 是 fiber 级单例，每枚芯片/每个气泡标签再挂一对
 // mouseenter/mouseleave 会随数量无界累积；现在悬停宽限统一由单例控制器持有。
 test('tipLayer 监听器只注册一对（不随芯片与标签累积）', () => {
@@ -347,6 +449,40 @@ test('编辑卡删除按钮文案走 t() 双语字典', () => {
   assert.match(source, /delete: 'Delete annotation',/)
 })
 
+// 配套回归：技能手势发出的那条消息，气泡里只该留下命令文本，
+// 尾部协议块要被判图手术切掉并贴上「引用 ×N」标签（op63）。
+test('技能手势消息的气泡只留命令文本，尾部引用块被隐藏并贴标签', () => {
+  const dom = createDom()
+  const doc = dom.window.document
+  const row = doc.createElement('div')
+  row.setAttribute('data-time-hover-root', '')
+  const bubble = doc.createElement('div')
+  bubble.className = 'user-bubble'
+  bubble.textContent = [
+    '/human-writing 全部修复',
+    '',
+    '我引用了以下内容，请逐条回应：',
+    '',
+    '1. quoted passage',
+    '',
+    '请按「Annotation N：…」的格式，逐条回应以上引用。',
+  ].join('\n')
+  row.appendChild(bubble)
+  doc.body.appendChild(row)
+  const { exported } = loadClient(dom.window)
+  const cleanup = exported.apply(makeCtx())  // kickDecorate → decorateAll 同步执行
+  try {
+    // 标签就 append 在气泡内部，所以只断言「命令在开头 + 协议文本不见」。
+    assert.ok(bubble.textContent.startsWith('/human-writing 全部修复'), '命令文本要保留：' + bubble.textContent)
+    assert.doesNotMatch(bubble.textContent, /我引用了以下|Annotation N/, '尾部协议块要被判图手术切掉')
+    const tag = row.querySelector('[data-annotation-bubble-tag]')
+    assert.ok(tag !== null, '应贴上引用标签')
+    assert.equal(tag.textContent, '引用 ×1')
+  } finally {
+    cleanup()
+    dom.window.close()
+  }
+})
 test('node half exports plugin identity', async () => {
   const mod = await import(pathToFileURL(resolve(root, 'index.mjs')).href)
   assert.equal(mod.default.name, pkg.name)

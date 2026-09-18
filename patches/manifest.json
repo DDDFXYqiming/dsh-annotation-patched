@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 49,
-  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2：i18n 补齐 + hover 监听器收敛；ab594842 基座全量重放字节级可复现，npm test 全绿",
+  "opsCount": 55,
+  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2：i18n 补齐 + hover 监听器收敛 + 斜杠技能携带引用；ab594842 基座全量重放字节级可复现，npm test 全绿",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -350,6 +350,36 @@
       "replace": "            del.textContent = t('edit.delete')\n"
     },
     {
+      "id": "op50-p0918-skill-catalog",
+      "description": "PATCH(2026-09-18-skill-catalog)：新增技能清单缓存（remote.skills 走 ctx.get 可选查询 + TTL + abort）、slashSkillName 判定与 stripTrailingBlock 尾部剥残留",
+      "find": "      function isCommandDraft(draft) {\n        return draft.trimStart().charAt(0) === '/'\n      }\n",
+      "replace": "      function isCommandDraft(draft) {\n        return draft.trimStart().charAt(0) === '/'\n      }\n\n      // PATCH(2026-09-18-skill-catalog): 「以 / 开头一律当宿主命令」的守卫过宽——技能的\n      // /name 手势不是宿主命令。宿主 dsh-tool-skill 的 invokedSkillNames 用\n      // SKILL_GESTURE = /(^|\\s)\\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\\s|$)/g 扫描用户消息的每个\n      // 文本块，引用块追加在命令之后不影响它识别；宿主输入机也只在\n      // draft.trim().startsWith(\"/\") 时才 adjudicate，未被认领（claim）的斜杠草稿最终\n      // 原样作为普通消息发出（onAdjudicated → detachedEffects，token 留在文本里），\n      // 技能照常加载。真命令（/goal、/model 等）与被 '/' 菜单认领的草稿依旧放行。\n      // 清单取自 remote.skills，与官方 dsh-client-ui-skill 的 '/' 数据源同一个服务。\n      // 该服务由 dsh-api-gateway 按命名空间动态挂载（new Service(ctx, 'remote.'+ns)），\n      // 未连接或未挂载时压根不存在，所以用 ctx.get 可选查询而不是写进 exports.inject：\n      // 硬注入会让整个引用插件在清单缺席时不加载（cordis「Required: the plugin does\n      // not load while the service is absent」），代价远大于「这一条不带引用」的保守回退。\n      var skillNames = null\n      var skillNamesAt = 0\n      var skillNamesFetching = false\n      var skillNamesAbort = null\n      var SKILL_TTL_MS = 60000\n      // token 语法与宿主 SKILL_GESTURE 一致：这种形态之外宿主根本不认作技能手势。\n      var SKILL_TOKEN = /^\\s*\\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\\s|$)/\n\n      /** 拉取本会话可调用的技能名（异步、TTL 内不重复请求、失败保留旧缓存）。\n       *  卸载安全由 disposer 里的 skillNamesAbort 负责（op59）：回调只会写闭包内\n       *  的两个变量，不碰 DOM，故这里不再引用 dispose 组的 disposed 标志。 */\n      function refreshSkillNames() {\n        if (skillNamesFetching) return\n        if (skillNames !== null && Date.now() - skillNamesAt < SKILL_TTL_MS) return\n        var remote\n        try {\n          remote = typeof ctx.get === 'function' ? ctx.get('remote.skills') : undefined\n        } catch (_) { return }\n        if (remote === null || remote === undefined || typeof remote.list !== 'function') return\n        var sessionId = currentSessionId()\n        if (typeof sessionId !== 'string' || sessionId === '') return\n        var ctrl = typeof AbortController === 'function' ? new AbortController() : null\n        skillNamesFetching = true\n        skillNamesAbort = ctrl\n        var done = function () {\n          skillNamesFetching = false\n          if (skillNamesAbort === ctrl) skillNamesAbort = null\n        }\n        try {\n          Promise.resolve(\n            remote.list({ sessionId: sessionId }, ctrl === null ? undefined : ctrl.signal),\n          ).then(function (res) {\n            done()\n            var value = res !== null && res !== undefined && res.ok === true ? res.value : undefined\n            var list = value !== null && value !== undefined ? value.skills : undefined\n            if (!Array.isArray(list)) return\n            var next = []\n            for (var i = 0; i < list.length; i++) {\n              var nm = list[i] !== null && list[i] !== undefined ? list[i].name : undefined\n              if (typeof nm === 'string' && nm !== '' && next.indexOf(nm) === -1) next.push(nm)\n            }\n            skillNames = next\n            skillNamesAt = Date.now()\n            console.log('[annotation] 技能清单就绪（' + next.length + ' 个）')\n          }, function () { done() })\n        } catch (err) {\n          done()\n          console.warn('[annotation] 技能清单拉取异常：', err)\n        }\n      }\n\n      /** 斜杠草稿能否携带引用：命中技能清单返回技能名，否则 null（= 原样放行）。 */\n      function slashSkillName(st, draft) {\n        if (st !== null && st !== undefined) {\n          // 被 '/' 菜单认领的命令（beginCommand）或输入机正忙：草稿归宿主，不抢。\n          if (st.claim !== null && st.claim !== undefined) return null\n          if (st.phase === 'claimed' || st.phase === 'submitting' || st.phase === 'adjudicating') return null\n        }\n        var m = SKILL_TOKEN.exec(draft)\n        if (m === null) return null\n        // 清单还没回来：预热一次并保守放行（下一条消息即可携带）。\n        if (skillNames === null) { refreshSkillNames(); return null }\n        return skillNames.indexOf(m[1]) !== -1 ? m[1] : null\n      }\n\n      /** 剥掉「后置追加未遂」的纯引用块（headOnly + formatOnly，无「提问：」标记）。\n       *  0.3.2 的补剥只锚草稿头部，覆盖不到技能拼稿产生的尾部形态。 */\n      function stripTrailingBlock(draft) {\n        return draft.replace(\n          /\\n*(?:我引用了以下|I annotated the following)[\\s\\S]*?(?:请按「Annotation N：…」的格式，逐条回应以上引用。|Please respond to each annotation above in the format \"Annotation N: …\".)\\n*/g,\n          '',\n        )\n      }\n"
+    },
+    {
+      "id": "op51-p0918-skill-attach",
+      "description": "PATCH(2026-09-18-skill-catalog)：attachAndSend 斜杠分支收窄——首 token 命中技能清单时把 headOnly 纯引用块后置追加拼稿，其余维持 toast + 保留引用",
+      "find": "          // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，\n          // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会\n          // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。\n          if (isCommandDraft(draft)) {\n            showToast(t('toast.skipCommand'))\n            return false\n          }\n",
+      "replace": "          // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，\n          // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会\n          // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。\n          // PATCH(2026-09-18-skill-catalog): 例外是技能手势——/name 的参数是自由文本，\n          // 引用块后置追加既不破坏 token 前缀（宿主服务端按全文扫描手势识别），也不会\n          // 被当作宿主命令参数消费；只有首 token 命中技能清单才拼，未命中维持原行为。\n          if (isCommandDraft(draft)) {\n            var skillName = slashSkillName(st, draft)\n            if (skillName !== null) {\n              // 先剥残留（头部标记块 + 尾部纯引用块），再把 headOnly 纯引用块（无\n              // 「提问：」标记）追加到命令之后——命令文本自身保持原样含 token 前缀。\n              var cmd = stripTrailingBlock(stripOldBlock(draft)).replace(/\\s+$/, '')\n              shell.setDraft(cmd + '\\n\\n' + buildBlock(false))\n              annotationAttached = true\n              console.log('[annotation] 斜杠技能 ' + skillName + ' 已随消息追加引用（' + ui.quotes.length + ' 条）')\n              return true\n            }\n            showToast(t('toast.skipCommand'))\n            return false\n          }\n"
+    },
+    {
+      "id": "op52-p0918-skill-refresh-save",
+      "description": "PATCH(2026-09-18-skill-catalog)：updateChip 按引用集变化预热清单（保存成功／删除／恢复都经此处）",
+      "find": "      function updateChip() {\n        var card = document.querySelector('[data-composer-card]')\n",
+      "replace": "      function updateChip() {\n        // PATCH(2026-09-18-skill-catalog): 引用集一变（保存成功／删除／按会话恢复）就\n        // 预热技能清单——回车判定是同步的，等按下回车才去拉清单这一条必然错过。\n        if (ui.quotes.length > 0) refreshSkillNames()\n        var card = document.querySelector('[data-composer-card]')\n"
+    },
+    {
+      "id": "op53-p0918-skill-refresh-start",
+      "description": "PATCH(2026-09-18-skill-catalog)：fiber 启动预热技能清单",
+      "find": "      var lastSessionId = currentSessionId()\n      ui.quotes = readPendingQuotes(lastSessionId)\n",
+      "replace": "      var lastSessionId = currentSessionId()\n      ui.quotes = readPendingQuotes(lastSessionId)\n      // PATCH(2026-09-18-skill-catalog): fiber 启动即预热技能清单（异步、失败静默）。\n      refreshSkillNames()\n"
+    },
+    {
+      "id": "op54-p0918-skill-refresh-switch",
+      "description": "PATCH(2026-09-18-skill-catalog)：会话切换重取技能清单（清单按 sessionId 拉）",
+      "find": "        writePendingQuotes(lastSessionId)\n        lastSessionId = cur\n",
+      "replace": "        writePendingQuotes(lastSessionId)\n        lastSessionId = cur\n        // PATCH(2026-09-18-skill-catalog): 技能清单是按会话拉的，切会话必须重取。\n        refreshSkillNames()\n"
+    },
+    {
       "id": "op60-p0918-hover-chip-grace",
       "description": "PATCH(2026-09-18-hover-controller)：makeReplyChip 去掉每芯片一份的 grace 定时器与 hide/keep 闭包",
       "find": "        var item = items[num - 1]\n        var grace = null\n        function hide() {\n          if (grace !== null) clearTimeout(grace)\n          grace = setTimeout(function () { grace = null; tipLayer.textContent = '' }, 250)\n        }\n        function keep() {\n          if (grace !== null) { clearTimeout(grace); grace = null }\n        }\n",
@@ -366,9 +396,15 @@
       "description": "PATCH(2026-09-18-hover-controller)：attachBubbleTag 同上（去掉 bubbleGrace/bubbleHide/bubbleKeep 与两对 tipLayer 监听器）",
       "find": "          var bubbleGrace = null\n          function bubbleHide() {\n            if (bubbleGrace !== null) clearTimeout(bubbleGrace)\n            bubbleGrace = setTimeout(function () {\n              bubbleGrace = null\n              tipLayer.textContent = ''\n            }, 250)\n          }\n          function bubbleKeep() {\n            if (bubbleGrace !== null) { clearTimeout(bubbleGrace); bubbleGrace = null }\n          }\n          tag.addEventListener('mouseleave', bubbleHide)\n          tipLayer.addEventListener('mouseenter', bubbleKeep)\n          tipLayer.addEventListener('mouseleave', bubbleHide)\n",
       "replace": "          // PATCH(2026-09-18-hover-controller): 同 makeReplyChip——标签不再自带 grace\n          // 定时器与 tipLayer 监听器，统一走单例 scheduleHide（共享 hoverGrace）。\n          tag.addEventListener('mouseleave', scheduleHide)\n"
+    },
+    {
+      "id": "op63-p0918-skill-bubble-surgery",
+      "description": "PATCH(2026-09-18-skill-catalog)：hideAnnotationBlock 认得「命令 + 尾部 headOnly 块」形态，切掉尾部协议文本、保留命令并让引用标签照常贴上",
+      "find": "          if (marker === -1) return false\n",
+      "replace": "          if (marker === -1) {\n            // PATCH(2026-09-18-skill-catalog): 技能手势的引用块是「追加在命令之后」的\n            // headOnly 形态（无「提问：」标记）：既不在 annotationOnly 的开头判据里，\n            // 也没有 marker 可切。这里按「\\n\\n + headOnly 起、formatOnly 收尾」定位，\n            // 切掉尾部块并保留命令文本——否则气泡会被裸协议文本占满，「引用 ×N」标签\n            // 也贴不上（items 优先取发送暂存，历史行由 parseItemsFromBubble 兜底）。\n            var cut = -1\n            var cutLangs = ['zh', 'en']\n            for (var ci = 0; ci < cutLangs.length; ci++) {\n              var tailHead = '\\n\\n' + dictVal(cutLangs[ci], 'block.headOnly')\n              var at = full.lastIndexOf(tailHead)\n              if (at === -1) continue\n              if (!full.trimEnd().endsWith(dictVal(cutLangs[ci], 'block.formatOnly'))) continue\n              cut = at\n              break\n            }\n            if (cut === -1) return false\n            var cpos = 0\n            var cutDone = false\n            for (var cj = 0; cj < nodes.length && !cutDone; cj++) {\n              var clen = (nodes[cj].nodeValue || '').length\n              if (cut < cpos + clen) {\n                nodes[cj].nodeValue = (nodes[cj].nodeValue || '').slice(0, cut - cpos).replace(/\\s+$/, '')\n                for (var ck = nodes.length - 1; ck > cj; ck--) {\n                  if (nodes[ck].parentNode !== null) nodes[ck].parentNode.removeChild(nodes[ck])\n                }\n                cutDone = true\n              }\n              cpos += clen\n            }\n            if (!cutDone) return false\n            var cutBubble = row.querySelector('[class*=\"bubble\"]')\n            if (cutBubble !== null) {\n              var cEmpties = cutBubble.querySelectorAll('div,span,p')\n              for (var ce = 0; ce < cEmpties.length; ce++) {\n                var cel = cEmpties[ce]\n                if (cel.parentNode !== null && (cel.textContent || '').trim() === '') cel.remove()\n              }\n            }\n            return true\n          }\n"
     }
   ],
-  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op49（编辑卡「删除引用」走 t() 双语字典）；追加 op60-op62（悬停宽限收敛为单例控制器，tipLayer 不再累积监听器）",
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op49（编辑卡「删除引用」走 t() 双语字典）；追加 op60-op62（悬停宽限收敛为单例控制器，tipLayer 不再累积监听器）；追加 op50-op54 与 op63（斜杠技能调用携带引用、清单刷新点、尾部残留剥除与气泡手术）",
   "retired": [
     {
       "id": "op04-p0814d-send-button",
