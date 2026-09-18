@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }} — check + tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只跑 jsdom 30 明确支持的版本：其 engines 为 ^22.22.2 || ^24.15.0 || >=26.0.0。
+        # 不设 Node 20 腿——npm 会把 20.x 判为 EBADENGINE，跑在一个上游不支持的组合上
+        # 只会制造假红；仓库 engines 仍写 >=20 是给运行时（DSH 宿主）的约束，不是本测试的。
+        node-version: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+      # 仓库未提交 package-lock.json，故用 npm install 而非 npm ci。
+      # 依赖只有 devDependencies 的 jsdom（外加 npm 自动补齐的 peer cordis），
+      # 全部来自 npm registry：不需要 API key、不调真模型、不依赖任何外网数据源。
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Syntax check (node --check)
+        run: npm run check
+      # 纯离线回归：test/client-load.test.mjs 用 jsdom + node:vm 把 client.js 当浏览器
+      # bundle 加载，模拟 Lexical contenteditable / 老 textarea 输入面，不起浏览器、
+      # 不联外网、不调模型。10 条断言全部是确定性的。
+      # 故意不进 CI 的检查：
+      #   - scripts/apply-patches.mjs：需要上游干净 client.js 基座（--fetch 走 gh api，
+      #     要 gh 登录 + 外网），属于升级上游时的人工工具，不适合 push/PR 门禁。
+      #   - 真机 DSH 实测 / 真模型端到端：需要密钥与模型服务，一律不进 push CI。
+      - name: Tests (offline — jsdom, no API keys)
+        run: npm test
