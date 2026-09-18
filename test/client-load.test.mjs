@@ -484,6 +484,18 @@ test('编辑卡删除按钮文案走 t() 双语字典', () => {
   assert.match(source, /delete: 'Delete annotation',/)
 })
 
+// 09-02 与 09-18 两轮审查都抓到「README 自述数字陈旧」，这里把它变成断言：
+// README（中英）里的版本号必须等于 package.json，op 条数必须等于 manifest.opsCount。
+test('README 自述的版本与 op 条数不漂移', () => {
+  const manifest = JSON.parse(readFileSync(resolve(root, 'patches', 'manifest.json'), 'utf8'))
+  assert.equal(manifest.ops.length, manifest.opsCount, 'manifest.opsCount 要与 ops 数组一致')
+  for (const name of ['README.md', 'README.en.md']) {
+    const doc = readFileSync(resolve(root, name), 'utf8')
+    assert.ok(doc.includes('v' + pkg.version), name + ' 的版本号应与 package.json 一致（v' + pkg.version + '）')
+    assert.ok(doc.includes(String(manifest.opsCount) + ' 条') || doc.includes('replays ' + manifest.opsCount + ' anchored ops'),
+      name + ' 的 op 条数应与 manifest.opsCount 一致（' + manifest.opsCount + '）')
+  }
+})
 // 配套回归：技能手势发出的那条消息，气泡里只该留下命令文本，
 // 尾部协议块要被判图手术切掉并贴上「引用 ×N」标签（op63）。
 test('技能手势消息的气泡只留命令文本，尾部引用块被隐藏并贴标签', () => {

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.4] - 2026-09-18
+
+### 修复（实盘缺陷：技能斜杠命令带不走引用）
+- 现象：选中助手文字存好引用，再输入 `/human-writing 全部修复` 回车。消息正常发出去了，引用却没跟上，输入框旁「1 条引用」一直挂着。
+- 根因（说人话）：插件把「一切以 `/` 开头的输入」一律当成宿主命令，怕拼稿把命令弄坏，就干脆不带引用、只弹一条提示。技能调用长得也像命令，可它的参数本来就是随便写的文本，引用块跟在命令后面不会弄坏任何东西。上游当初担心的是「`/goal` 这类真命令被引用块顶掉 token 前缀」，那条对真命令仍然成立，对技能属于误伤。
+- 修复：斜杠草稿先拿首 token 去宿主的技能清单（`remote.skills`，和官方技能插件同一个数据源）里查。查到就把纯引用块追加在命令之后一起发出（命令前缀原样保留，块用无「提问：」标记的 headOnly 形态，因为参数区不需要提问分隔）；查不到、或清单还没回来，就维持原行为（不带引用、引用留给下一条、toast 说明）。内建命令行为一字未改。
+- 附带护栏：宿主输入机已经认领命令（从 `/` 菜单里选中命令，`phase` 处于 claimed/submitting/adjudicating 或 claim 在手）时绝不抢改草稿，不与宿主的命令声明打架。
+- 依据（读宿主源码核对，非猜测）：`dsh-tool-skill` 的 `invokedSkillNames` 用 `SKILL_GESTURE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g` 扫描用户消息的每个文本块，引用块后置不影响识别；`dsh-client-ui-conversation` 的输入机只在 `draft.trim().startsWith("/")` 时 adjudicate，未被认领的斜杠草稿最终经 `onAdjudicated → detachedEffects` 原样发出，token 留在文本里。技能名 token 判据与宿主 `SKILL_GESTURE` 同语法，不做超集匹配。
+- 气泡配套（op63）：技能形态的引用块在命令之后、没有「提问：」标记，原来的气泡判图手术认不出来，会把整段协议文本留在你的气泡里、也贴不上「引用 ×N」标签。现在按「headOnly 起 + formatOnly 收尾」定位尾部块，切掉协议文本、保留命令原文。
+- 实现：op50–op54、op63。清单按会话拉取、60 秒内复用，fiber 启动、引用集变化（保存成功／删除／恢复，落在 `updateChip`）、会话切换三处刷新；请求异步，卸载时 `abort`。服务用 `ctx.get('remote.skills')` 可选查询而非写进 `exports.inject`：该服务由 `dsh-api-gateway` 按命名空间动态挂载（`new Service(ctx, 'remote.' + ns)`），未挂载时压根不存在，硬注入会让整个引用插件跟着不加载（cordis「Required: the plugin does not load while the service is absent」），代价远大于「这一条不带引用」的保守回退。`inject` 保持 3 项不变。
+
+### 清理（2026-09-18 官方规范审查发现逐条处理）
+- **MAJOR-1** README 自述三处陈旧（09-02 同型回归）：中英 README 版本号 → v0.3.4、op 条数 34 → 60、PATCH 范围改为「`2026-08-14` 起，批次以 `grep -o "PATCH([^)]*)" client.js | sort -u` 为准」，「上游 tag」措辞修正为「上游 commit」。另在 `npm test` 加一条文档一致性断言（README 版本 == `package.json`、README op 条数 == `manifest.opsCount`、`opsCount` == `ops.length`），让这类漂移变成测试失败而不是靠人记。
+- **MINOR-1** 编辑卡「删除引用」硬编码中文（`client.js:1458`）→ 改走 `t('edit.delete')`，zh/en 字典各补 key（op47–op49）。
+- **MINOR-2** apply disposer 漏清空定时器 → 补清 `toastTimer`／`hoverGrace`／`assistantDecorateTimer`，新增 `disposed` 卸载守卫（`scheduleAssistantDecorate`／`decorateAssistantAnnotations`／`decorateAll` 三处先判），toast 的定时器摘除时顺手删掉它自己的节点（否则提示条永久留在 body 上），in-flight 技能清单请求 `abort`（op55–op59）。回归测试：卸载后拖尾定时器不得再往宿主助手行插芯片（做过反向变异验证会红）。
+- **MINOR-3** `tipLayer` 监听器随芯片/标签数量无界累积 → 悬停宽限统一交给单例 `scheduleHide`/`cancelHide`（共享 `hoverGrace`），每枚回复芯片与每个气泡标签不再各自往 `tipLayer` 挂监听器、也不再各自持有 grace 定时器（op60–op62）。顺带消掉 MINOR-2 清单里的两类悬挂定时器，测试断言 `tipLayer` 上只剩一对监听器。
+- **MINOR-4** 与上游同名的 loader entry id → 本包 `cordis.patch.yml` 的 insert id 由 `dsh-annotation` 改为 `dsh-annotation-patched`。改前先只读核对 `~/.dsh/profiles/web/cordis.patch.yml` 与 base/web-app/headless/home 四层：profile 层没有以该 id 写的裸条目（只有注释），改名安全。此后与上游包同时安装不再撞 duplicate loader entry。README「已知边界」补写迁移提示（按旧 id 写过覆盖条目的人需一起改名）。
+- **INFO-1** `scripts/apply-patches.mjs` 的 op 重放从 `String.replace(find, replace)` 改为 `split/join`，消除 replace 文本含 `$&`/`$'`/`$1` 时被静默展开的潜伏工具坑（与术语改名步骤统一写法）。改后旧 43 条 op 重放仍与提交字节一致。
+- **INFO-3** Node 支持区间落差（`engines: >=20` vs jsdom 30 要求 `>=22.22.2`）→ 按轻的做法：README 维护段写明「跑本仓测试需 Node ≥22.22.2，`engines: >=20` 只约束 DSH 宿主运行时」，`engines` 不动（宿主运行时区间是有意声明）。
+- **INFO-2 / INFO-4 / INFO-5 / INFO-6 / INFO-7 / INFO-8 / INFO-9 / INFO-10** 记为可接受或已缓解，不改代码：INFO-2 未提交 lockfile 与 actions 按 tag 固定属个人仓库常规做法，CI 注释已如实披露离线门禁；INFO-4 外部 DOM 型 bundle 无 CSS Modules 通道，主体色已走 `--dsw-*` 令牌、字面量仅作 fallback，注入的 `<style>` 由宿主 `removeOwnedStyles` 纳管；INFO-5 装饰/改写既有行不属于 `ConversationNodeDefinition` 的贡献业务行通道，DOM 强耦合已在 README 披露且保留 `data-streaming` 守卫；INFO-6 `dsh.sessions.current` 回退带 `snap.ids` 交叉校验与一次性响亮 `console.warn`，属防御性设计；INFO-7 `cordis` peer 是与上游对齐的框架兼容区间，非运行时 import；INFO-8 CHANGELOG 不入 tarball 属发布卫生（files 七项与运行面一致，README 无死链）；INFO-9 factory 期注入的 style 不属 fiber 资源，不进 disposer 是对的；INFO-10 已由本版的 dispose 行为断言覆盖（从「不抛」升级为「卸载后无 DOM 改动」）。
+
+### 验证
+- `node scripts/apply-patches.mjs --fetch ab594842 --out <tmp> --expect client.js`：terminology 106 处、60/60 op、0 失配、与提交字节级一致 ✓
+- `npm run check`（`node --check index.mjs && node --check client.js`）退出码 0；`node --check scripts/apply-patches.mjs`、`node --check test/client-load.test.mjs` 同为 0
+- `npm test`：20/20 通过（新增 10 条：技能拼稿 5 条 + 气泡手术 1 条 + dispose 1 条 + tipLayer 监听器 1 条 + i18n 1 条 + 文档一致性 1 条）。其中「技能拼稿」「dispose 后无 DOM 改动」「气泡手术」三组做过反向变异（把修复点改掉），确认会红而非空跑
+- 测试桩补齐：`makeCtx` 支持注入假 `remote.skills` 服务与 composer 输入机快照（phase/claim）、locale 桩；沙箱补 `AbortController`/`performance`；jsdom 缺 `ResizeObserver` 补空实现（否则 `updateChip` 在测试里抛错，chip 文案断言无从谈起）
+- `npm pack --dry-run`：7 文件，交付面不变
 ## [0.3.3] - 2026-09-17
 
 ### 对齐（客户端依赖声明跟随上游 v1.4.11）

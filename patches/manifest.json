@@ -15,7 +15,7 @@
     }
   ],
   "opsCount": 60,
-  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2：i18n 补齐 + hover 监听器收敛 + dispose 生命周期补齐 + 斜杠技能携带引用；ab594842 基座全量重放字节级可复现，npm test 全绿",
+  "verifiedAgainst": "2026-09-18 DSH 0.1.6-alpha.2 适配：会话 id 解析器（op38-op45）+ 纯引用补剥不再吞用户输入（op46）+ 斜杠技能携带引用/生命周期与监听器收敛（op47-op63）；ab594842 基座全量重放字节级可复现，npm test 全绿",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -434,7 +434,7 @@
       "replace": "          if (marker === -1) {\n            // PATCH(2026-09-18-skill-catalog): 技能手势的引用块是「追加在命令之后」的\n            // headOnly 形态（无「提问：」标记）：既不在 annotationOnly 的开头判据里，\n            // 也没有 marker 可切。这里按「\\n\\n + headOnly 起、formatOnly 收尾」定位，\n            // 切掉尾部块并保留命令文本——否则气泡会被裸协议文本占满，「引用 ×N」标签\n            // 也贴不上（items 优先取发送暂存，历史行由 parseItemsFromBubble 兜底）。\n            var cut = -1\n            var cutLangs = ['zh', 'en']\n            for (var ci = 0; ci < cutLangs.length; ci++) {\n              var tailHead = '\\n\\n' + dictVal(cutLangs[ci], 'block.headOnly')\n              var at = full.lastIndexOf(tailHead)\n              if (at === -1) continue\n              if (!full.trimEnd().endsWith(dictVal(cutLangs[ci], 'block.formatOnly'))) continue\n              cut = at\n              break\n            }\n            if (cut === -1) return false\n            var cpos = 0\n            var cutDone = false\n            for (var cj = 0; cj < nodes.length && !cutDone; cj++) {\n              var clen = (nodes[cj].nodeValue || '').length\n              if (cut < cpos + clen) {\n                nodes[cj].nodeValue = (nodes[cj].nodeValue || '').slice(0, cut - cpos).replace(/\\s+$/, '')\n                for (var ck = nodes.length - 1; ck > cj; ck--) {\n                  if (nodes[ck].parentNode !== null) nodes[ck].parentNode.removeChild(nodes[ck])\n                }\n                cutDone = true\n              }\n              cpos += clen\n            }\n            if (!cutDone) return false\n            var cutBubble = row.querySelector('[class*=\"bubble\"]')\n            if (cutBubble !== null) {\n              var cEmpties = cutBubble.querySelectorAll('div,span,p')\n              for (var ce = 0; ce < cEmpties.length; ce++) {\n                var cel = cEmpties[ce]\n                if (cel.parentNode !== null && (cel.textContent || '').trim() === '') cel.remove()\n              }\n            }\n            return true\n          }\n"
     }
   ],
-  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op49（编辑卡「删除引用」走 t() 双语字典）；追加 op60-op62（悬停宽限收敛为单例控制器，tipLayer 不再累积监听器）；追加 op55-op59（disposed 卸载守卫 + dispose 补清短定时器与 abort）；追加 op50-op54 与 op63（斜杠技能调用携带引用、清单刷新点、尾部残留剥除与气泡手术）",
+  "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op63（17 条：斜杠技能拼稿 6、i18n 3、dispose 5、hover 控制器收敛 3），基座仍为 ab594842，无锚点改动",
   "retired": [
     {
       "id": "op04-p0814d-send-button",
