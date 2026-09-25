@@ -3,9 +3,9 @@
 ## [0.3.7] - 2026-09-25
 
 ### 修复（运行中插队的消息气泡样式崩：引用块协议文本裸奔）
-- 现象：0.3.6 之后插队消息能带上引用了，但气泡样式会崩——正常是用户文字后面跟「引用 ×N」小标签，插队消息却把「我引用了以下…提问：」整段协议文本显示在气泡里；有的消息贴着标签但协议文本还在，有的连标签都没有，一瞬间一个样。
-- 根因（读宿主渲染时序核对，非猜测）：运行中插队的消息要等当前工具调用结束才插入消息流，插入流程中宿主会重建用户气泡文本（MessageText 重渲染）。手术切掉的引用块随重建的文本回来，而插件自贴的「引用 ×N」标签是独立节点、常能幸存。两处机制叠加让它永远修不回来：①装饰扫描的完成判定是「标签存在即跳过该行」，标签幸存的行永远不再手术；②宿主重建文本走 characterData/attributes 批次，不进 childList 全量装饰扫描，兜底轮询又只有 5 秒窗口。
-- 修复（op81–op83）：①完成判定改为「气泡文本里还有引用块就重做手术」，标签只补缺不重贴，条目数据取标签上挂的 `__annotationItems`；②消息流 observer 的 characterData/attributes 批次对涉及的用户行做定点修补（成本 O(批次数)，不动流式期的全量扫描性能取舍）；③切块时跳过自贴标签的文本节点——重手术时它会混进气泡文本，破坏纯引用形态的识别与切块定位。
+- 现象：0.3.6 之后插队消息能带上引用了，但气泡样式会崩。正常是用户文字后面跟「引用 ×N」小标签，插队消息却把「我引用了以下…提问：」整段协议文本显示在气泡里；有的消息贴着标签但协议文本还在，有的连标签都没有，一瞬间一个样。
+- 根因（读宿主渲染时序核对）：运行中插队的消息要等当前工具调用结束才插入消息流，插入流程中宿主会重建用户气泡文本（MessageText 重渲染）。手术切掉的引用块随重建的文本回来，而插件自贴的「引用 ×N」标签是独立节点、常能幸存。两处机制叠加让它永远修不回来：①装饰扫描的完成判定是「标签存在即跳过该行」，标签幸存的行永远不再手术；②宿主重建文本走 characterData/attributes 批次，不进 childList 全量装饰扫描，兜底轮询又只有 5 秒窗口。
+- 修复（op81–op83）：①完成判定改为「气泡文本里还有引用块就重做手术」，标签只补缺不重贴，条目数据取标签上挂的 `__annotationItems`；②消息流 observer 的 characterData/attributes 批次对涉及的用户行做定点修补（成本 O(批次数)，不动流式期的全量扫描性能取舍）；③切块时跳过自贴标签的文本节点，重手术时它会混进气泡文本，破坏纯引用形态的识别与切块定位。
 - 回归测试：「宿主重建气泡文本后手术自动重做（characterData 批次定点修补）」与「纯引用消息重建文本后重手术不受标签文本干扰」各一条；两个修复点分别做过反向变异，用例如预期变红，可证伪。
 - 验证：81 条 op 对基座 ab594842 正序重放与产物字节级一致（`--expect` 通过）；`npm run check` 退出码 0；`npm test` 24/24 通过。
 
@@ -13,7 +13,7 @@
 
 ### 修复（对话运行中 Ctrl+Enter 插队发送不带引用）
 - 现象：引用收好了、「引用 ×1」标签也在输入框旁，只要对话空闲时回车发送就能带上；可对话正在运行、用 Ctrl+Enter 插队发送时，发出去的消息只有自己打的文字，引用块压根没进消息。
-- 根因（读宿主源码核对，非猜测）：v1.3.18 的修饰键守卫（issue #10）把「Cmd/Ctrl+Enter + 有文字草稿」整条交回 composer，`shouldAttachForEnter` 直接判定不拼稿——引用块从未写进草稿，自然随消息发不出去。这条守卫的意图是别抢宿主的 Queue / Steer 策略，但实现把拼稿也一起禁了。
+- 根因（读宿主源码核对）：v1.3.18 的修饰键守卫（issue #10）把「Cmd/Ctrl+Enter + 有文字草稿」整条交回 composer，`shouldAttachForEnter` 直接判定不拼稿，引用块从未写进草稿，自然随消息发不出去。这条守卫的意图是别抢宿主的 Queue / Steer 策略，但实现把拼稿也一起禁了。
 - 修复（op72–op80）：拼稿与接管提交解耦。Cmd/Ctrl+Enter 与裸 Enter 一样把引用块拼进草稿；带文字时事件放行 composer，由宿主 `resolveSubmitMode` 决定 Queue / Steer（issue #10 原意保持），引用块随草稿一起由宿主提交。只有「纯引用空草稿」仍由插件接管直发 `submit('queue')`（issue #17 语义保持：composer 的 accelerated 空草稿路径在「运行中 + 有排队消息」时走 steerQueue 而不发送草稿）。
 - 回归测试：「Cmd/Ctrl+Enter 带文字插队：拼稿并交回 composer」与「Cmd/Ctrl+Enter 纯引用空草稿：接管直发 queue」各一条；对修复点做过反向变异（摘掉 attachWasPureQuote 条件），插队用例如预期变红，可证伪。
 - 验证：78 条 op 对基座 ab594842 正序重放与产物字节级一致（`--expect` 通过）；`npm run check` 退出码 0；`npm test` 22/22 通过。
@@ -25,7 +25,7 @@
 ## [0.3.5] - 2026-09-18
 
 修复（Agent Teams 多会话同屏 + rAF 泄漏）
-- **引用拼稿不再可能写进错误会话**（op64，MAJOR）：开启官方 `dsh-experimental-agent-team-profile` / `-web-profile` 后，Team 面板可把 teammate 会话换进主视图，而右侧栏 `ui-subagent` 用 `renderFactorySlot('conversation.content', {variant:'embedded'})` 渲染**同一套** `[data-composer-card]`（对 continuable 子代理还是可写的），于是同屏出现多块 composer。`currentSessionId()` 只认主视图（`uiWorkspace.mainReference`），而宿主 DOM 没有把 composer 卡片绑定到会话的标记（无 `data-session`/`data-conversation`），**无法判定用户实际在敲哪一块**。因此 `attachAndSend` 在 composer 数 >1 时失败关闭：不拼稿、原样交回宿主发送——宁可少一次引用，也不把引用块写进错误会话的草稿。闸放在公共落点，一次覆盖回车与按钮两条发送路径。
+- **引用拼稿不再可能写进错误会话**（op64，MAJOR）：开启官方 `dsh-experimental-agent-team-profile` / `-web-profile` 后，Team 面板可把 teammate 会话换进主视图，而右侧栏 `ui-subagent` 用 `renderFactorySlot('conversation.content', {variant:'embedded'})` 渲染**同一套** `[data-composer-card]`（对 continuable 子代理还是可写的），于是同屏出现多块 composer。`currentSessionId()` 只认主视图（`uiWorkspace.mainReference`），而宿主 DOM 没有把 composer 卡片绑定到会话的标记（无 `data-session`/`data-conversation`），**无法判定用户实际在敲哪一块**。因此 `attachAndSend` 在 composer 数 >1 时失败关闭：不拼稿、原样交回宿主发送。宁可少一次引用，也不把引用块写进错误会话的草稿。闸放在公共落点，一次覆盖回车与按钮两条发送路径。
 - **两处 rAF 补 `disposed` 守卫**（op65 / op65b）：`focusComposer` 与 `onLayoutChange` 的 rAF 回调此前未守卫（op55-58 只覆盖了三个装饰函数）。插件自身卸载后 composer 仍 `connected`，原 `isConnected` 守卫拦不住，会 `focus` + `selectAllChildren` 改宿主焦点/选区。
 - 已知未做：引用编号（`.dsh-ann-num`，z 940）与 chip/tip（1150/1160）仍高于 Team 面板（z-index 110），面板打开时可能遮挡其顶部并吃掉点击。压低层级会牵动本插件与宿主弹层的既有相对关系（见 2026-08-14e 的 z-index 取舍注释），正解需 `elementFromPoint` 遮挡判定 + 真浏览器实测，本轮未做。
 - 验证：63 条 op 逆序重放回基座每条恰好命中 1 次、正序重放与产物字节级一致（141,624 B）；`npm run check` 0；`npm test` 全绿。
@@ -37,7 +37,7 @@
 - 根因（说人话）：插件把「一切以 `/` 开头的输入」一律当成宿主命令，怕拼稿把命令弄坏，就干脆不带引用、只弹一条提示。技能调用长得也像命令，可它的参数本来就是随便写的文本，引用块跟在命令后面不会弄坏任何东西。上游当初担心的是「`/goal` 这类真命令被引用块顶掉 token 前缀」，那条对真命令仍然成立，对技能属于误伤。
 - 修复：斜杠草稿先拿首 token 去宿主的技能清单（`remote.skills`，和官方技能插件同一个数据源）里查。查到就把纯引用块追加在命令之后一起发出（命令前缀原样保留，块用无「提问：」标记的 headOnly 形态，因为参数区不需要提问分隔）；查不到、或清单还没回来，就维持原行为（不带引用、引用留给下一条、toast 说明）。内建命令行为一字未改。
 - 附带护栏：宿主输入机已经认领命令（从 `/` 菜单里选中命令，`phase` 处于 claimed/submitting/adjudicating 或 claim 在手）时绝不抢改草稿，不与宿主的命令声明打架。
-- 依据（读宿主源码核对，非猜测）：`dsh-tool-skill` 的 `invokedSkillNames` 用 `SKILL_GESTURE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g` 扫描用户消息的每个文本块，引用块后置不影响识别；`dsh-client-ui-conversation` 的输入机只在 `draft.trim().startsWith("/")` 时 adjudicate，未被认领的斜杠草稿最终经 `onAdjudicated → detachedEffects` 原样发出，token 留在文本里。技能名 token 判据与宿主 `SKILL_GESTURE` 同语法，不做超集匹配。
+- 依据（读宿主源码核对）：`dsh-tool-skill` 的 `invokedSkillNames` 用 `SKILL_GESTURE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g` 扫描用户消息的每个文本块，引用块后置不影响识别；`dsh-client-ui-conversation` 的输入机只在 `draft.trim().startsWith("/")` 时 adjudicate，未被认领的斜杠草稿最终经 `onAdjudicated → detachedEffects` 原样发出，token 留在文本里。技能名 token 判据与宿主 `SKILL_GESTURE` 同语法，不做超集匹配。
 - 气泡配套（op63）：技能形态的引用块在命令之后、没有「提问：」标记，原来的气泡判图手术认不出来，会把整段协议文本留在你的气泡里、也贴不上「引用 ×N」标签。现在按「headOnly 起 + formatOnly 收尾」定位尾部块，切掉协议文本、保留命令原文。
 - 实现：op50–op54、op63。清单按会话拉取、60 秒内复用，fiber 启动、引用集变化（保存成功／删除／恢复，落在 `updateChip`）、会话切换三处刷新；请求异步，卸载时 `abort`。服务用 `ctx.get('remote.skills')` 可选查询而非写进 `exports.inject`：该服务由 `dsh-api-gateway` 按命名空间动态挂载（`new Service(ctx, 'remote.' + ns)`），未挂载时压根不存在，硬注入会让整个引用插件跟着不加载（cordis「Required: the plugin does not load while the service is absent」），代价远大于「这一条不带引用」的保守回退。`inject` 保持 3 项不变。
 
@@ -66,7 +66,7 @@
 ## [0.3.2] - 2026-09-17
 
 ### 修复（回车拼稿吞掉用户自己输入的文字）
-- 现象：先打字、再收集引用、然后回车——发出去了，但前端气泡里只剩「引用 ×1」，用户自己输入的文字消失。
+- 现象：先打字、再收集引用、然后回车，发出去了，但前端气泡里只剩「引用 ×1」，用户自己输入的文字消失。
 - 根因（0.3.0 的 op13 引入）：为适配上游 v1.4.11 的「无标记纯引用块」补剥，写成了「stripOldBlock 没改动草稿，就把草稿整块置空」。而草稿里根本没有残留块（用户正常打字）同样会命中该分支，于是把用户正在输入的文字一并丢掉。
 - 修复（op46）：补剥只在草稿确实以引用块首句（我引用了以下 / I annotated the following）开头时进行，且剥不动就保持原样，不再无条件置空。
 - 验证：重放 43/43 op、0 失配、字节级可复现；`npm run check` 通过；`npm test` 10/10（新增回归：回车拼稿不得吞掉用户已输入的文字）。
@@ -74,7 +74,7 @@
 
 ### 修复（DSH 0.1.6 会话接口漂移导致引用发不出去）
 - 现象：划词保存引用后 chip 常驻输入框右上角，回车 / Ctrl+Enter / 点发送按钮三条路径都不把引用块带进消息，控制台零 `[annotation]` 输出。
-- 根因（实测，非猜测）：DSH 0.1.6 起 `sessions` 服务的线上 provider 是 `dsh-api-session-controller` 的 `ClientSessions`，其 `list` 快照只有 `ids/byId/phase/subagentsByParent/jobsBySession`，源码注释写明 view selection remains outside the Controller——旧字段 `sessions.list.getSnapshot().current` **恒为 undefined**。插件在 `attachAndSend` 第一行就静默 `return false`；`writePendingQuotes` 拿不到会话 id 导致待发送引用永不落盘；`watchInputDraft` 订阅永不建立导致发送后 chip 永不清空。
+- 根因（实测）：DSH 0.1.6 起 `sessions` 服务的线上 provider 是 `dsh-api-session-controller` 的 `ClientSessions`，其 `list` 快照只有 `ids/byId/phase/subagentsByParent/jobsBySession`，源码注释写明 view selection remains outside the Controller，旧字段 `sessions.list.getSnapshot().current` **恒为 undefined**。插件在 `attachAndSend` 第一行就静默 `return false`；`writePendingQuotes` 拿不到会话 id 导致待发送引用永不落盘；`watchInputDraft` 订阅永不建立导致发送后 chip 永不清空。
 - 修复：新增统一解析器 `currentSessionId()`（op38），按「老宿主快照 `current` → `uiWorkspace.mainReference` 视图层当前会话 → `uiWorkspace.selection` 持久化选择单元 → 宿主自己写的 `localStorage[dsh.sessions.current]`」取会话 id，并在全部 8 处取用处替换（op39–op45）。解析失败时一次性 `console.warn`，不再静默。
 - 验证：`node scripts/apply-patches.mjs --fetch ab594842 --out client.js` → 42/42 op、0 失配、字节级可复现；`npm run check` 通过；`npm test` 9/9 通过（新增两条回归：快照无 `current` 时回退 localStorage、以及回退 uiWorkspace）。
 ## [0.3.0] - 2026-09-17
@@ -113,13 +113,13 @@
 
 ### 修复（宽布局悬浮卡右边溢出）
 - DSH web 中列可拉伸到很宽后，右对齐的用户气泡贴住屏幕右缘；hover「引用 ×N」标签 /「Annotation N」芯片 / 输入框旁引用标签时，展开卡片右侧溢出屏幕被裁。
-- 根因：三处 tip 卡片 append 到 body 直下的 tipLayer，不带 `[data-annotation-for-dsh]`，不继承 border-box——content-box 下 `width:300/320px` + padding 24px + border 2px，实际外框比标称宽 26px，而水平钳位按标称宽算。
+- 根因：三处 tip 卡片 append 到 body 直下的 tipLayer，不带 `[data-annotation-for-dsh]`，不继承 border-box。content-box 下 `width:300/320px` + padding 24px + border 2px，实际外框比标称宽 26px，而水平钳位按标称宽算。
 - 修复：tip cssText 补 `box-sizing:border-box`（×3），钳位改用实测外框宽 `el.offsetWidth`（×3，双保险）。patches/manifest.json 追加组 `p0903-tip-clamp` 共 7 op（ops 29 → 36），fd24ef92 基座全量重放 `--expect client.js` 字节级一致 ✓。
 
 ## [0.2.1] - 2026-09-01
 
 ### 修复（宿主 composer Lexical 化）
-- 宿主 DSH 的输入框由 `<textarea>` 换成 Lexical `ComposerContentEditable`（`<div contenteditable="true">`）后，回车拼稿守卫 `ta instanceof HTMLTextAreaElement` 永不成立：引用块不随消息发出，且 `annotationAttached` 恒 false 导致「草稿变空即清空」的确认链也不触发——引用集与「N 条引用」chip 常驻。现改为 `isComposerEditor()` 统一判别，**textarea（旧宿主）与 contenteditable（新宿主机）都认**，向后兼容。
+- 宿主 DSH 的输入框由 `<textarea>` 换成 Lexical `ComposerContentEditable`（`<div contenteditable="true">`）后，回车拼稿守卫 `ta instanceof HTMLTextAreaElement` 永不成立：引用块不随消息发出，且 `annotationAttached` 恒 false 导致「草稿变空即清空」的确认链也不触发，引用集与「N 条引用」chip 常驻。现改为 `isComposerEditor()` 统一判别，**textarea（旧宿主）与 contenteditable（新宿主机）都认**，向后兼容。
 - `focusComposer()`：同样只认 textarea → 保存引用后不再自动聚焦。现两种输入面都聚焦（textarea 走 `setSelectionRange`，contenteditable 用 Range 折叠到文末）。
 - chip 的 `ResizeObserver`：改观察 `textarea` 或 `[contenteditable="true"]`。
 
