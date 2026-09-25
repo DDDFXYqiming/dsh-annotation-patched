@@ -107,6 +107,9 @@ function loadClient(window) {
 function makeCtx(drafts, snapshot, workspace, initialDraft, opts) {
   const sink = Array.isArray(drafts) ? drafts : []
   const o = opts || {}
+  // 插件接管直发（submitAttached）走 conversation.input.submit(mode)；
+  // 传 opts.submitCalls 收集，供「接管 / 交回 composer」断言。
+  const submits = Array.isArray(o.submitCalls) ? o.submitCalls : []
   return {
     get(name) {
       if (name === 'uiWorkspace') return workspace
@@ -133,6 +136,7 @@ function makeCtx(drafts, snapshot, workspace, initialDraft, opts) {
               subscribe() { return () => {} },
             },
             setDraft(text) { sink.push(text) },
+            submit(mode) { submits.push(mode) },
           }
         },
       },
@@ -239,14 +243,21 @@ async function collectDraftsOnEnter(doc, window, composerHtml, snapshot, workspa
     // 技能清单是在保存引用时异步预热的（回车判定同步读缓存），给它一拍。
     await wait(20)
     const editor = doc.querySelector('[data-composer-card] textarea, [data-composer-card] [contenteditable="true"]')
-    editor.dispatchEvent(new window.KeyboardEvent('keydown', {
+    // opts.keyEvent 覆盖修饰键（如 { ctrlKey: true } 模拟 Cmd/Ctrl+Enter 插队发送）。
+    const keyEvent = new window.KeyboardEvent('keydown', {
       key: 'Enter', bubbles: true, cancelable: true,
-    }))
+      ...((opts && opts.keyEvent) || {}),
+    })
+    editor.dispatchEvent(keyEvent)
     await wait(0)
     // chip / toast 都挂在插件自有层上，cleanup 会摘掉，必须在 try 内读。
     const toastEl = doc.querySelector('[data-annotation-toast]')
     return {
       drafts,
+      // defaultPrevented=true = 插件接管提交（stopPropagation + submitAttached）；
+      // false = 事件放行 composer，由宿主 Queue/Steer 策略提交。
+      defaultPrevented: keyEvent.defaultPrevented,
+      submits: Array.isArray(opts && opts.submitCalls) ? opts.submitCalls : [],
       toast: toastEl !== null ? toastEl.textContent : '',
       chip: doc.querySelector('[data-annotation-chip]').textContent,
     }
@@ -323,6 +334,44 @@ test('回车拼稿不得吞掉用户已输入的文字', async () => {
     assert.match(drafts[0], /quoted passage/, '引用块要在')
     assert.match(drafts[0], /帮我把这段代码改成 TypeScript/, '用户自己输入的文字必须保留')
     assert.match(drafts[0], /提问：/, '带正文时必须有「提问：」分隔标记')
+  } finally {
+    dom.window.close()
+  }
+})
+
+// 回归（2026-09-25 插队丢引用）：对话运行中 Cmd/Ctrl+Enter 插队发送时，旧守卫
+// （shouldAttachForEnter）见修饰键 + 有文字就整条交回 composer，引用块压根没拼进
+// 草稿——发出去的消息不带引用。修复后拼稿恒做、带文字时不接管提交，事件放行
+// composer，由宿主 resolveSubmitMode 走 Queue/Steer。
+test('Cmd/Ctrl+Enter 带文字插队：拼稿并交回 composer（引用随消息发出）', async () => {
+  const dom = createDom()
+  try {
+    const { drafts, defaultPrevented, submits } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, '帮我把这段代码改成 TypeScript',
+      { keyEvent: { ctrlKey: true }, submitCalls: [] })
+    assert.equal(drafts.length, 1, '插队发送也必须拼入引用块')
+    assert.match(drafts[0], /quoted passage/, '引用块要随插队消息发出')
+    assert.match(drafts[0], /帮我把这段代码改成 TypeScript/, '用户文字保留')
+    assert.equal(defaultPrevented, false, '带文字时不得接管提交，交回 composer 走 Queue/Steer')
+    assert.equal(submits.length, 0, '插件不得代发，宿主策略（Queue/Steer）原样生效')
+  } finally {
+    dom.window.close()
+  }
+})
+
+// issue #17 语义保持：纯引用空草稿 + Cmd/Ctrl+Enter 仍由插件接管直发——composer 的
+// accelerated 空草稿路径在「运行中 + 有排队消息」时走 steerQueue 而不发送草稿。
+test('Cmd/Ctrl+Enter 纯引用空草稿：插件接管直发 queue（issue #17 保持）', async () => {
+  const dom = createDom()
+  try {
+    const { drafts, defaultPrevented, submits } = await collectDraftsOnEnter(
+      dom.window.document, dom.window, EDITOR,
+      undefined, undefined, undefined,
+      { keyEvent: { ctrlKey: true }, submitCalls: [] })
+    assert.equal(drafts.length, 1, '纯引用也要拼稿')
+    assert.equal(defaultPrevented, true, '纯引用空草稿由插件接管')
+    assert.deepEqual(submits, ['queue'], '接管后以 queue 模式直发')
   } finally {
     dom.window.close()
   }

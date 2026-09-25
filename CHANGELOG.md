@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.6] - 2026-09-25
+
+### 修复（对话运行中 Ctrl+Enter 插队发送不带引用）
+- 现象：引用收好了、「引用 ×1」标签也在输入框旁，只要对话空闲时回车发送就能带上；可对话正在运行、用 Ctrl+Enter 插队发送时，发出去的消息只有自己打的文字，引用块压根没进消息。
+- 根因（读宿主源码核对，非猜测）：v1.3.18 的修饰键守卫（issue #10）把「Cmd/Ctrl+Enter + 有文字草稿」整条交回 composer，`shouldAttachForEnter` 直接判定不拼稿——引用块从未写进草稿，自然随消息发不出去。这条守卫的意图是别抢宿主的 Queue / Steer 策略，但实现把拼稿也一起禁了。
+- 修复（op72–op80）：拼稿与接管提交解耦。Cmd/Ctrl+Enter 与裸 Enter 一样把引用块拼进草稿；带文字时事件放行 composer，由宿主 `resolveSubmitMode` 决定 Queue / Steer（issue #10 原意保持），引用块随草稿一起由宿主提交。只有「纯引用空草稿」仍由插件接管直发 `submit('queue')`（issue #17 语义保持：composer 的 accelerated 空草稿路径在「运行中 + 有排队消息」时走 steerQueue 而不发送草稿）。
+- 回归测试：「Cmd/Ctrl+Enter 带文字插队：拼稿并交回 composer」与「Cmd/Ctrl+Enter 纯引用空草稿：接管直发 queue」各一条；对修复点做过反向变异（摘掉 attachWasPureQuote 条件），插队用例如预期变红，可证伪。
+- 验证：78 条 op 对基座 ab594842 正序重放与产物字节级一致（`--expect` 通过）；`npm run check` 退出码 0；`npm test` 22/22 通过。
 
 ### 补录（本地未推送补丁重放至 0.3.5 基线）
 - 原本地 op47-attach-debug（attachAndSend 静默早退可观测化，2c82cdd）因 0.3.4/0.3.5 改动了锚点区域，按新产物文本拆为 op66–op71 重新登记并重放：解析不到会话 id、同屏多 composer 歧义失败关闭（覆盖 op64 新闸）、scope 解析失败、shouldAttachForEnter 不拼稿、斜杠命令跳过共五条早退路径各补 `annDbgAttach` 告警，仅待发引用 >0 时打印，正常路径不刷屏。

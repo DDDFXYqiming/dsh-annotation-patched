@@ -10,7 +10,8 @@
 //   3. 输入框旁「引用 ×N」标签：悬浮可见全部内容、可逐条删除
 //   4. 回车发送：capture 阶段拦截 Enter（IME 守卫对齐官方 InputBar：isComposing /
 //      keyCode 229 + compositionend 后短延迟 latch）→ 引用块 prepend 进草稿
-//      （setDraft，不覆盖用户文字）→ composer 正常提交
+//      （setDraft，不覆盖用户文字）→ composer 正常提交；Cmd/Ctrl+Enter（含运行中
+//      插队）同样拼稿，仅「纯引用空草稿」由插件接管直发
 //   5. 用户气泡不显示引用块：MutationObserver 微任务阶段（绘制前）按最后一个
 //      「提问：」切掉引用块、贴「引用 ×N」标签（hover 可见）；1s 轮询兜底 +
 //      历史消息自动修复（用户气泡是 MessageText 单文本节点，非 markdown）
@@ -1297,20 +1298,22 @@ window.__ModuleLoader__.load({
         // 引用清单 + 用户输入的问题。用户始终看不到文本被塞进去。
         // IME 铁律（v1.3.10 修了 nativeEvent.keyCode；v1.3.11 补 compositionend
         // 后 Enter keyCode=13 的时序洞）：合成期 / 上屏确认 Enter 绝不能 setDraft。
-        // 修饰键守卫（v1.3.18 修 issue #10）：Shift+Enter 换行、Alt+Enter 默认路径
-        // 不触发拼稿；裸 Enter 继续处理带文字草稿，Cmd/Ctrl+Enter 只接管空草稿
-        // 的纯引用。已有文字时交回 composer，保留宿主的 Queue / Steer 策略。
-        // 纯引用的 Cmd/Ctrl+Enter 需要在这里直接提交：composer 的 accelerated 路径在
-        // 「运行中 + 有排队消息」时会走 steerQueue，而不是发送当前草稿；我们在
-        // capture 阶段 setDraft 后 stopPropagation，主动 submit('queue')，保证
-        // 纯引用能直接发出，同时不会把引用块明文留在输入框。
+        // 修饰键守卫（v1.3.18 修 issue #10；PATCH(2026-09-25-queue-quote) 修订）：
+        // Shift+Enter 换行、Alt+Enter 默认路径不触发拼稿；Cmd/Ctrl+Enter 与裸
+        // Enter 一样拼稿——运行中 Cmd/Ctrl+Enter 插队发送此前不带引用（有文字时
+        // 被 shouldAttachForEnter 整条交回 composer，引用块压根没拼进草稿）。
+        // 拼稿与接管提交解耦：拼稿恒做；只有「纯引用空草稿」才由插件接管直发
+        // （issue #17：composer 的 accelerated 空草稿路径在「运行中 + 有排队消息」
+        // 时走 steerQueue 而不发送草稿，故 capture 阶段 setDraft 后 stopPropagation
+        // 主动 submit('queue')）。带文字时放行 composer，由宿主 resolveSubmitMode
+        // 决定 Queue / Steer（issue #10 的原意），引用块随草稿一起由宿主提交。
         if (e.key === 'Enter' && !e.shiftKey && !e.altKey
           && ui.quotes.length > 0 && !isImeKeyBlocked(e)) {
           var ta = e.target
           // PATCH(2026-09-01-lexical): 旧守卫只认 HTMLTextAreaElement → Lexical 下永不成立
           if (isComposerEditor(ta)) {
             var attached = attachAndSend(e)
-            if (attached && (e.ctrlKey || e.metaKey)) {
+            if (attached && attachWasPureQuote && (e.ctrlKey || e.metaKey)) {
               e.preventDefault()
               e.stopPropagation()
               submitAttached()
@@ -1718,9 +1721,9 @@ window.__ModuleLoader__.load({
           + (hasQuestion ? '\n\n' + t('block.marker') : '')
       }
 
-      function shouldAttachForEnter(e, draft) {
-        return !(e.ctrlKey || e.metaKey) || draft.trim() === ''
-      }
+      // PATCH(2026-09-25-queue-quote)：原 shouldAttachForEnter（Cmd/Ctrl+Enter 有文字
+      // 就不拼稿、整条交回 composer）随拼稿/接管解耦删除——它把插队消息的引用一并
+      // 丢了。拼稿恒做，接管与否由 onKeyDown 按 attachWasPureQuote 判定。
 
       /** 裸斜杠开头的草稿按宿主约定是命令（/goal、/model 等）：
        *  宿主输入机靠「草稿以命令 token 开头」维持命令声明。 */
@@ -1833,6 +1836,10 @@ window.__ModuleLoader__.load({
       // PATCH(2026-09-18-attach-debug): 引用丢失排障。attachAndSend 的静默早退此前只
       // return false、不留任何痕迹，于是「气泡带『引用 ×N』标记、消息里却没有引用块」
       // 无从定位。仅在确有待发引用时告警，正常无引用路径不刷屏。
+      // PATCH(2026-09-25-queue-quote)：本次拼稿前草稿是否为空（纯引用）。Cmd/Ctrl+Enter
+      // 只有纯引用才由插件接管直发（issue #17）；带文字时放行 composer 走宿主
+      // Queue / Steer，引用块随草稿一起由宿主提交。
+      var attachWasPureQuote = false
       function annDbgAttach(why) {
         try {
           var n = (typeof ui !== 'undefined' && ui && ui.quotes && ui.quotes.length) ? ui.quotes.length : 0
@@ -1840,6 +1847,7 @@ window.__ModuleLoader__.load({
         } catch (_) {}
       }
       function attachAndSend(e) {
+        attachWasPureQuote = false
         var current = currentSessionId()
         if (current === undefined) { annDbgAttach('currentSessionId() 解析不到当前会话 id'); return false }
         // PATCH(2026-09-18-team-sessions): 同屏可能出现多块 composer——Agent Team 面板把
@@ -1855,7 +1863,6 @@ window.__ModuleLoader__.load({
           var shell = ctx.conversation.input.for(scoped)
           var st = shell.state.getSnapshot()
           var draft = st.draft || ''
-          if (!shouldAttachForEnter(e, draft)) { annDbgAttach('shouldAttachForEnter 判定本次不拼稿'); return false }
           // 斜杠命令不拼引用（issue #20）：引用块前置会破坏命令 token 前缀，
           // 宿主 watchClaim 释放声明后 /goal 被降级为普通消息；后置追加则会
           // 把块原样并入命令参数。命令草稿原样放行，引用保留待下一条消息。
@@ -1869,6 +1876,7 @@ window.__ModuleLoader__.load({
               // 「提问：」标记）追加到命令之后——命令文本自身保持原样含 token 前缀。
               var cmd = stripTrailingBlock(stripOldBlock(draft)).replace(/\s+$/, '')
               shell.setDraft(cmd + '\n\n' + buildBlock(false))
+              attachWasPureQuote = false
               annotationAttached = true
               console.log('[annotation] 斜杠技能 ' + skillName + ' 已随消息追加引用（' + ui.quotes.length + ' 条）')
               return true
@@ -1897,6 +1905,7 @@ window.__ModuleLoader__.load({
           var hasQuestion = clean.trim() !== ''
           var block = buildBlock(hasQuestion)
           shell.setDraft(block + (hasQuestion ? '\n' + clean : ''))
+          attachWasPureQuote = !hasQuestion
           annotationAttached = true
           console.log('[annotation] 引用块已拼入草稿，回车将随消息发送（' + ui.quotes.length + ' 条）')
           return true

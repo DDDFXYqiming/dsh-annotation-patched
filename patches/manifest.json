@@ -14,8 +14,8 @@
       "note": "全局术语改名：UI 文案与注释（英文 Annotation N 协议串不动）"
     }
   ],
-  "opsCount": 69,
-  "verifiedAgainst": "2026-09-18 rebase 至 0.3.5：原本地 op47-attach-debug（静默早退可观测化）按新产物文本拆为 op66-71 重放，覆盖 op64 多 composer 歧义闸；基座 ab594842 不变，全量正序重放与产物字节级一致复核",
+  "opsCount": 78,
+  "verifiedAgainst": "2026-09-25 0.3.6：插队丢引用修复——拼稿与接管解耦（op72-80）。Cmd/Ctrl+Enter 有文字也拼稿（旧 shouldAttachForEnter 禁拼稿导致运行中插队消息不带引用），接管直发仅限纯引用空草稿（issue #17 保持）；基座 ab594842 不变，全量正序重放与产物字节级一致复核",
   "ops": [
     {
       "id": "op00-pkg-id",
@@ -495,6 +495,69 @@
       "description": "attachAndSend：斜杠命令跳过拼稿路径补告警",
       "find": "            showToast(t('toast.skipCommand'))\n            return false",
       "replace": "            showToast(t('toast.skipCommand'))\n            annDbgAttach('isCommandDraft：斜杠命令不拼引用')\n            return false"
+    },
+    {
+      "id": "op72-queue-quote-head-note",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：流程头注释补 Cmd/Ctrl+Enter 插队拼稿边界",
+      "find": "//      （setDraft，不覆盖用户文字）→ composer 正常提交",
+      "replace": "//      （setDraft，不覆盖用户文字）→ composer 正常提交；Cmd/Ctrl+Enter（含运行中\n//      插队）同样拼稿，仅「纯引用空草稿」由插件接管直发"
+    },
+    {
+      "id": "op73-queue-quote-keydown-note",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：onKeyDown 修饰键守卫注释改写：拼稿与接管解耦",
+      "find": "        // 修饰键守卫（v1.3.18 修 issue #10）：Shift+Enter 换行、Alt+Enter 默认路径\n        // 不触发拼稿；裸 Enter 继续处理带文字草稿，Cmd/Ctrl+Enter 只接管空草稿\n        // 的纯引用。已有文字时交回 composer，保留宿主的 Queue / Steer 策略。\n        // 纯引用的 Cmd/Ctrl+Enter 需要在这里直接提交：composer 的 accelerated 路径在\n        // 「运行中 + 有排队消息」时会走 steerQueue，而不是发送当前草稿；我们在\n        // capture 阶段 setDraft 后 stopPropagation，主动 submit('queue')，保证\n        // 纯引用能直接发出，同时不会把引用块明文留在输入框。",
+      "replace": "        // 修饰键守卫（v1.3.18 修 issue #10；PATCH(2026-09-25-queue-quote) 修订）：\n        // Shift+Enter 换行、Alt+Enter 默认路径不触发拼稿；Cmd/Ctrl+Enter 与裸\n        // Enter 一样拼稿——运行中 Cmd/Ctrl+Enter 插队发送此前不带引用（有文字时\n        // 被 shouldAttachForEnter 整条交回 composer，引用块压根没拼进草稿）。\n        // 拼稿与接管提交解耦：拼稿恒做；只有「纯引用空草稿」才由插件接管直发\n        // （issue #17：composer 的 accelerated 空草稿路径在「运行中 + 有排队消息」\n        // 时走 steerQueue 而不发送草稿，故 capture 阶段 setDraft 后 stopPropagation\n        // 主动 submit('queue')）。带文字时放行 composer，由宿主 resolveSubmitMode\n        // 决定 Queue / Steer（issue #10 的原意），引用块随草稿一起由宿主提交。"
+    },
+    {
+      "id": "op74-queue-quote-takeover",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：接管提交附加「纯引用空草稿」条件",
+      "find": "            if (attached && (e.ctrlKey || e.metaKey)) {",
+      "replace": "            if (attached && attachWasPureQuote && (e.ctrlKey || e.metaKey)) {"
+    },
+    {
+      "id": "op75-queue-quote-drop-guard",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：删除 shouldAttachForEnter（Cmd/Ctrl+Enter 有文字禁拼稿）",
+      "find": "      function shouldAttachForEnter(e, draft) {\n        return !(e.ctrlKey || e.metaKey) || draft.trim() === ''\n      }",
+      "replace": "      // PATCH(2026-09-25-queue-quote)：原 shouldAttachForEnter（Cmd/Ctrl+Enter 有文字\n      // 就不拼稿、整条交回 composer）随拼稿/接管解耦删除——它把插队消息的引用一并\n      // 丢了。拼稿恒做，接管与否由 onKeyDown 按 attachWasPureQuote 判定。"
+    },
+    {
+      "id": "op76-queue-quote-flag-decl",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：声明 attachWasPureQuote 纯引用标志",
+      "find": "      function annDbgAttach(why) {",
+      "replace": "      // PATCH(2026-09-25-queue-quote)：本次拼稿前草稿是否为空（纯引用）。Cmd/Ctrl+Enter\n      // 只有纯引用才由插件接管直发（issue #17）；带文字时放行 composer 走宿主\n      // Queue / Steer，引用块随草稿一起由宿主提交。\n      var attachWasPureQuote = false\n      function annDbgAttach(why) {"
+    },
+    {
+      "id": "op77-queue-quote-flag-reset",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：attachAndSend 开头重置纯引用标志",
+      "find": "      function attachAndSend(e) {\n        var current = currentSessionId()",
+      "replace": "      function attachAndSend(e) {\n        attachWasPureQuote = false\n        var current = currentSessionId()"
+    },
+    {
+      "id": "op78-queue-quote-drop-call",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：删除 shouldAttachForEnter 早退调用（op70 告警随迁）",
+      "find": "          var draft = st.draft || ''\n          if (!shouldAttachForEnter(e, draft)) { annDbgAttach('shouldAttachForEnter 判定本次不拼稿'); return false }",
+      "replace": "          var draft = st.draft || ''"
+    },
+    {
+      "id": "op79-queue-quote-flag-skill",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：技能拼稿分支纯引用标志置 false",
+      "find": "              shell.setDraft(cmd + '\\n\\n' + buildBlock(false))\n              annotationAttached = true\n",
+      "replace": "              shell.setDraft(cmd + '\\n\\n' + buildBlock(false))\n              attachWasPureQuote = false\n              annotationAttached = true\n"
+    },
+    {
+      "id": "op80-queue-quote-flag-main",
+      "group": "p0925-queue-quote",
+      "description": "PATCH(2026-09-25-queue-quote)：主拼稿分支按正文有无记录纯引用标志",
+      "find": "          shell.setDraft(block + (hasQuestion ? '\\n' + clean : ''))\n          annotationAttached = true\n",
+      "replace": "          shell.setDraft(block + (hasQuestion ? '\\n' + clean : ''))\n          attachWasPureQuote = !hasQuestion\n          annotationAttached = true\n"
     }
   ],
   "adaptedFor": "2026-08-21 自 v1.3.13 升级重放至 fd24ef92；2026-09-01 补录 p0827-flow-observer + p0901-lexical-compat；2026-09-05 追加 p0905-strip-think；2026-09-17 基座迁移至 ab594842(v1.4.11-preview.1，适配 DSH 0.1.6)：11 条锚点适配（op00/op13/op15/op16/op17/op20/op21/op22/op23/op28），4 条退休（op04/op18/op24/op27，上游已覆盖，见 retired）；2026-09-18 追加 op47-op63（17 条：斜杠技能拼稿 6、i18n 3、dispose 5、hover 控制器收敛 3），基座仍为 ab594842，无锚点改动；2026-09-18 追加 op64-op65b（3 条：composer 歧义失败关闭 + 2 处 rAF disposed 守卫），基座仍为 ab594842，无锚点改动",
