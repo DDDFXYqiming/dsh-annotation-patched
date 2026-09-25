@@ -538,7 +538,7 @@ test('编辑卡删除按钮文案走 t() 双语字典', () => {
 test('README 自述的版本与 op 条数不漂移', () => {
   const manifest = JSON.parse(readFileSync(resolve(root, 'patches', 'manifest.json'), 'utf8'))
   assert.equal(manifest.ops.length, manifest.opsCount, 'manifest.opsCount 要与 ops 数组一致')
-  for (const name of ['README.md', 'README.en.md']) {
+  for (const name of ['README.md', 'README.zh.md']) {
     const doc = readFileSync(resolve(root, name), 'utf8')
     assert.ok(doc.includes('v' + pkg.version), name + ' 的版本号应与 package.json 一致（v' + pkg.version + '）')
     assert.ok(doc.includes(String(manifest.opsCount) + ' 条') || doc.includes('replays ' + manifest.opsCount + ' anchored ops'),
