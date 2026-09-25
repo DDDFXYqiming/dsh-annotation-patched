@@ -1245,6 +1245,10 @@ window.__ModuleLoader__.load({
         // 流式批次: 只做助手回复芯片的限流装饰(行内 data-streaming 守卫已保证
         // 流式中不做替换, 结束后的首拍芯片滞后 ≤500ms), 不再逐批全文档扫描。
         scheduleAssistantDecorate()
+        // PATCH(2026-09-25-redecorate)：宿主重建用户气泡文本属于 characterData/
+        // attributes 批次，同样要对涉及的用户行定点修补（有块就重切），
+        // 否则手术被覆盖后协议文本永久裸奔。
+        repairRowsOf(mutations)
       })
       function messageFlowRoot() {
         return document.querySelector('[data-chat-flow]')
@@ -2248,6 +2252,11 @@ window.__ModuleLoader__.load({
           var walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT)
           var n
           while ((n = walker.nextNode()) !== null) {
+            // PATCH(2026-09-25-redecorate)：跳过插件自贴标签的文本节点。宿主重建
+            // 文本后重手术时它会混进 full，破坏 annotationOnly 的 endsWith 判定
+            // （尾部变成「引用 ×1」）与 marker 切块定位。
+            var owner = n.parentElement
+            if (owner !== null && owner.closest('[data-annotation-bubble-tag]') !== null) continue
             nodes.push(n)
             full += n.nodeValue || ''
           }
@@ -2627,6 +2636,37 @@ window.__ModuleLoader__.load({
         return chip
       }
 
+      /** 单行装饰：气泡文本里还有引用块就切块 + 补标签。返回是否做了手术。
+       *  PATCH(2026-09-25-redecorate)：完成判定以「文本里还有引用块」为准，不能以
+       *  标签存在为准——运行中插队的消息在插入流程中会被宿主重建文本（MessageText
+       *  重渲染），手术切掉的块随文本回来而标签幸存，旧判定会永远跳过该行，协议
+       *  文本就此裸奔（用户实测两张截图）。重手术时条目优先取标签上挂的
+       *  __annotationItems（发送暂存早已消费过），标签只补缺不重贴。 */
+      function decorateRow(el, allowPending) {
+        if (el.hasAttribute('data-pending-steering')) return false
+        var b = el.querySelector('[class*="bubble"]')
+        if (b === null) return false
+        if (!hasAnnotationBlock(b.textContent || '')) return false
+        var tag = el.querySelector('[data-annotation-bubble-tag]')
+        var items = null
+        var fromSend = false
+        if (tag !== null) {
+          items = tag.__annotationItems || []
+        } else if (allowPending && pendingDeco.length > 0) {
+          items = pendingDeco[0].items
+          fromSend = true
+        }
+        if (items === null || items.length === 0) { items = parseItemsFromBubble(el); fromSend = false }
+        if (!hideAnnotationBlock(el)) return false // 内容未渲染完 → 留给下轮（发送暂存数据不弹出）
+        if (fromSend) pendingDeco.shift()
+        if (tag === null) attachBubbleTag(el, items)
+        // 这里绝不清空待发送引用：DOM 层面无法区分「刚发送的消息」与「会话
+        // 切换/刷新后重新渲染的历史消息」，历史消息重装饰曾被误判为已发送而
+        // 清空刚恢复的待发送引用（issue #28 复测）。发送清空的唯一权威是
+        // watchInputDraft 的「草稿有→空」迁移，其初始化时序洞由订阅重试补齐。
+        return true
+      }
+
       /** 全局轮询装饰：找所有「携带引用块但未装饰」的用户气泡 → 隐藏引用块 + 贴标签。
        *  不依赖发送事件链：异步渲染、刷新后的历史消息都能被覆盖。 */
       function decorateAll() {
@@ -2634,28 +2674,29 @@ window.__ModuleLoader__.load({
         try {
           var rows = allMessageRows()
           for (var i = rows.length - 1; i >= 0; i--) {
-            var el = rows[i]
-            if (el.hasAttribute('data-pending-steering')) continue
-            if (el.querySelector('[data-annotation-bubble-tag]') !== null) continue
-            var b = el.querySelector('[class*="bubble"]')
-            if (b === null || !hasAnnotationBlock(b.textContent || '')) continue
-            // 最新一条优先消费发送时暂存的数据；其余从气泡文本反解析（须在隐藏前）。
-            var items = null
-            var fromSend = false
-            if (i === rows.length - 1 && pendingDeco.length > 0) { items = pendingDeco[0].items; fromSend = true }
-            if (items === null || items.length === 0) { items = parseItemsFromBubble(el); fromSend = false }
-            if (!hideAnnotationBlock(el)) continue // 内容未渲染完 → 留给下轮（发送暂存数据不弹出）
-            if (fromSend) pendingDeco.shift()
-            attachBubbleTag(el, items)
-            // 这里绝不清空待发送引用：DOM 层面无法区分「刚发送的消息」与「会话
-            // 切换/刷新后重新渲染的历史消息」，历史消息重装饰曾被误判为已发送而
-            // 清空刚恢复的待发送引用（issue #28 复测）。发送清空的唯一权威是
-            // watchInputDraft 的「草稿有→空」迁移，其初始化时序洞由订阅重试补齐。
+            decorateRow(rows[i], i === rows.length - 1)
           }
           // 助手回复：把「Annotation N：」变为可悬浮的引用芯片（内容取自最近一条带引用的用户消息）。
           decorateAssistantAnnotations()
         } catch (err) {
           console.warn('[annotation] 装饰扫描失败：', err)
+        }
+      }
+
+      /** PATCH(2026-09-25-redecorate)：对本批 mutation 涉及的用户行做定点修补。
+       *  宿主重建用户气泡文本是 characterData/attributes 批次，走不到 childList
+       *  全量扫描；兜底轮询又只有 5 秒窗口，漏网后协议文本永久裸奔。这里按
+       *  mutation 目标回溯所属消息行重做手术，成本 O(批次数)。 */
+      function repairRowsOf(mutations) {
+        var seen = []
+        for (var i = 0; i < mutations.length; i++) {
+          var t = mutations[i].target
+          var el = t instanceof Element ? t : (t && t.parentElement)
+          if (el === null || el === undefined || typeof el.closest !== 'function') continue
+          var row = el.closest('[data-chat-flow-kind], [data-time-hover-root]')
+          if (row === null || seen.indexOf(row) !== -1) continue
+          seen.push(row)
+          decorateRow(row, false)
         }
       }
 

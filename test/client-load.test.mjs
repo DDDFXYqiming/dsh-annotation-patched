@@ -579,6 +579,110 @@ test('技能手势消息的气泡只留命令文本，尾部引用块被隐藏�
     dom.window.close()
   }
 })
+
+// 回归（2026-09-25 插队消息样式崩）：运行中插队的消息在插入流程中会被宿主重建
+// 用户气泡文本（MessageText 重渲染），手术切掉的引用块随文本回来，而「引用 ×N」
+// 标签幸存。旧幂等判定（标签存在即跳过该行）让协议文本永久裸奔；宿主重建走
+// characterData 批次又不进 childList 全量扫描，5 秒兜底轮询窗口过后无人再修。
+// 修复后：文本里还有引用块就重做手术（标签只补缺），characterData 批次定点修补。
+test('宿主重建气泡文本后手术自动重做（characterData 批次定点修补）', async () => {
+  const dom = createDom()
+  const doc = dom.window.document
+  const row = doc.createElement('div')
+  row.setAttribute('data-time-hover-root', '')
+  const bubble = doc.createElement('div')
+  bubble.className = 'user-bubble'
+  const BLOCK_TEXT = J4([
+    '我引用了以下 1 处内容，请逐条回应：',
+    '',
+    '1. quoted passage',
+    '',
+    '请按「Annotation N：…」的格式，逐条回应以上引用。',
+    '',
+    '提问：',
+    '用户自己的问题',
+  ])
+  bubble.textContent = BLOCK_TEXT
+  row.appendChild(bubble)
+  // 消息流容器：observer 只绑 [data-chat-flow]，没有它定点修补不会触发。
+  const flow = doc.createElement('div')
+  flow.setAttribute('data-chat-flow', '')
+  flow.appendChild(row)
+  doc.body.appendChild(flow)
+  const { exported } = loadClient(dom.window)
+  const cleanup = exported.apply(makeCtx())  // kickDecorate → decorateAll 同步执行
+  try {
+    // 前置：首次手术切块 + 贴标签成功。
+    assert.ok(!bubble.textContent.includes('我引用了以下'), '前置：首次手术切块成功')
+    const tag = bubble.querySelector('[data-annotation-bubble-tag]')
+    assert.ok(tag !== null, '前置：标签已贴')
+    // 模拟宿主重建文本：把正文文本节点的值恢复为完整消息（characterData 批次，
+    // 对应 MessageText 重渲染），标签节点幸存不动。
+    let revived = null
+    const w2 = doc.createTreeWalker(bubble, dom.window.NodeFilter.SHOW_TEXT)
+    let nn
+    while ((nn = w2.nextNode()) !== null) {
+      const p = nn.parentElement
+      if (p !== null && p.closest('[data-annotation-bubble-tag]') !== null) continue
+      revived = nn
+      break
+    }
+    assert.ok(revived !== null, '前置：手术后仍有正文文本节点')
+    revived.nodeValue = BLOCK_TEXT
+    // characterData/childList 批次由消息流 observer 定点修补，给微任务一拍。
+    await wait(50)
+    assert.ok(!bubble.textContent.includes('我引用了以下'), '重建后协议块必须再次被切掉')
+    assert.ok(bubble.textContent.includes('用户自己的问题'), '用户自己的问题保留')
+    assert.equal(
+      bubble.querySelectorAll('[data-annotation-bubble-tag]').length, 1,
+      '标签只补缺不重贴，不得出现第二个')
+    assert.equal(tag.__annotationItems.length, 1, '标签上挂的引用条目在重手术后保留')
+  } finally {
+    cleanup()
+    dom.window.close()
+  }
+})
+
+// 同型回归的纯引用形态：无「提问：」标记的整块消息，重手术时插件自贴标签的
+// 文本（「引用 ×1」）会混进气泡文本，破坏 annotationOnly 的 endsWith 判定，
+// 切块因此永远失败。hideAnnotationBlock 现在跳过标签子树内的文本节点。
+test('纯引用消息重建文本后重手术不受标签文本干扰', async () => {
+  const dom = createDom()
+  const doc = dom.window.document
+  const row = doc.createElement('div')
+  row.setAttribute('data-time-hover-root', '')
+  const bubble = doc.createElement('div')
+  bubble.className = 'user-bubble'
+  const ONLY_BLOCK = J4([
+    '我引用了以下内容，请逐条回应：',
+    '',
+    '1. quoted passage',
+    '',
+    '请按「Annotation N：…」的格式，逐条回应以上引用。',
+  ])
+  bubble.textContent = ONLY_BLOCK
+  row.appendChild(bubble)
+  const flow = doc.createElement('div')
+  flow.setAttribute('data-chat-flow', '')
+  flow.appendChild(row)
+  doc.body.appendChild(flow)
+  const { exported } = loadClient(dom.window)
+  const cleanup = exported.apply(makeCtx())
+  try {
+    assert.ok(!bubble.textContent.includes('我引用了以下'), '前置：纯引用块被整块清掉')
+    assert.ok(bubble.querySelector('[data-annotation-bubble-tag]') !== null, '前置：标签已贴')
+    // 模拟宿主重建：纯引用块文本回来，标签幸存（此时尾部文本 = 块文本 + 「引用 ×1」）。
+    bubble.insertBefore(doc.createTextNode(ONLY_BLOCK), bubble.firstChild)
+    await wait(50)
+    assert.ok(!bubble.textContent.includes('我引用了以下'), '重手术必须仍能识别并清掉纯引用块')
+    assert.equal(
+      bubble.querySelectorAll('[data-annotation-bubble-tag]').length, 1,
+      '标签只补缺不重贴')
+  } finally {
+    cleanup()
+    dom.window.close()
+  }
+})
 test('node half exports plugin identity', async () => {
   const mod = await import(pathToFileURL(resolve(root, 'index.mjs')).href)
   assert.equal(mod.default.name, pkg.name)
