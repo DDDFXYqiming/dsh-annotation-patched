@@ -683,6 +683,57 @@ test('纯引用消息重建文本后重手术不受标签文本干扰', async ()
     dom.window.close()
   }
 })
+test('多个消息流中切换插件页面后恢复历史引用气泡和回复芯片', async () => {
+  const dom = createDom()
+  const doc = dom.window.document
+  const block = J4([
+    '我引用了以下 1 处内容，请逐条回应：', '', '1. quoted passage', '',
+    '请按「Annotation N：…」的格式，逐条回应以上引用。', '', '提问：', '回到会话后继续测试',
+  ])
+  const createFlow = () => {
+    const flow = doc.createElement('div')
+    flow.setAttribute('data-chat-flow', '')
+    const user = doc.createElement('div')
+    user.setAttribute('data-chat-flow-kind', 'user-message')
+    const bubble = doc.createElement('div')
+    bubble.className = 'user-bubble'
+    bubble.textContent = block
+    user.appendChild(bubble)
+    const assistant = doc.createElement('div')
+    assistant.setAttribute('data-chat-flow-kind', 'assistant-step')
+    const reply = doc.createElement('p')
+    reply.textContent = 'Annotation 1：引用恢复成功。'
+    assistant.appendChild(reply)
+    flow.append(user, assistant)
+    return flow
+  }
+  const first = createFlow()
+  // 0.2 的页面同时存在多个消息流；较早的流仍在，后面的流单独重建。
+  const earlier = doc.createElement('div')
+  earlier.setAttribute('data-chat-flow', '')
+  earlier.textContent = '较早的普通消息'
+  doc.body.appendChild(earlier)
+  doc.body.appendChild(first)
+  const { exported } = loadClient(dom.window)
+  const cleanup = exported.apply(makeCtx())
+  try {
+    assert.equal(first.querySelectorAll('[data-annotation-bubble-tag]').length, 1)
+    // 等启动时的有界扫描结束，模拟用户稍后切到插件设置再返回。
+    await wait(6200)
+    first.remove()
+    await wait(20)
+    const restored = createFlow()
+    doc.body.appendChild(restored)
+    await wait(60)
+    assert.ok(!restored.querySelector('.user-bubble').textContent.includes('我引用了以下'))
+    assert.equal(restored.querySelectorAll('[data-annotation-bubble-tag]').length, 1)
+    assert.equal(restored.querySelectorAll('[data-annotation-reply-chip]').length, 1)
+  } finally {
+    cleanup()
+    dom.window.close()
+  }
+})
+
 test('node half exports plugin identity', async () => {
   const mod = await import(pathToFileURL(resolve(root, 'index.mjs')).href)
   assert.equal(mod.default.name, pkg.name)

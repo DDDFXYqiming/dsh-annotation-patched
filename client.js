@@ -1221,7 +1221,7 @@ window.__ModuleLoader__.load({
       // 内容 observer 只绑定当前消息流，避免 document.body 上任意属性/浮层变化
       // 都触发 O(全部消息行) 的 decorateAll。另用一个仅监听 childList 的轻量
       // rootObserver 处理 SPA 会话切换时消息流/composer 根节点整体替换。
-      var observerTarget = null
+      var observerTargets = []
       var observer = new MutationObserver(function (mutations) {
         if (!mutationRelevant(mutations)) return
         onLayoutChange()
@@ -1250,21 +1250,24 @@ window.__ModuleLoader__.load({
         // 否则手术被覆盖后协议文本永久裸奔。
         repairRowsOf(mutations)
       })
-      function messageFlowRoot() {
-        return document.querySelector('[data-chat-flow]')
-          || document.querySelector('[data-focus-flow]')
+      function messageFlowRoots() {
+        return Array.prototype.slice.call(document.querySelectorAll('[data-chat-flow], [data-focus-flow]'))
       }
       function bindMessageObserver() {
-        var next = messageFlowRoot()
-        if (next === observerTarget) return
+        var next = messageFlowRoots()
+        if (next.length === observerTargets.length && next.every(function (root, index) {
+          return root === observerTargets[index]
+        })) return false
         observer.disconnect()
-        observerTarget = next
-        if (next !== null) {
-          observer.observe(next, { childList: true, subtree: true, characterData: true })
-        }
+        observerTargets = next
+        next.forEach(function (root) {
+          observer.observe(root, { childList: true, subtree: true, characterData: true })
+        })
+        return next.length > 0
       }
       var rootObserver = new MutationObserver(function () {
-        bindMessageObserver()
+        // 新版页面包含多个消息流；重新挂载的历史内容也需要立即装饰。
+        if (bindMessageObserver()) kickDecorate()
         // React 可能整体替换 composer；ResizeObserver 只绑定旧节点时，需重新取锚。
         if (ui.quotes.length > 0
           && document.querySelector('[data-composer-card]') !== chipComposerCard) {
@@ -2811,7 +2814,7 @@ window.__ModuleLoader__.load({
         host.removeEventListener('pointerdown', onHostPointerDown)
         observer.disconnect()
         rootObserver.disconnect()
-        observerTarget = null
+        observerTargets = []
         if (typeof unsub === 'function') unsub()
         if (inputWatchTimer !== null) { clearInterval(inputWatchTimer); inputWatchTimer = null }
         if (typeof inputUnsub === 'function') inputUnsub()
