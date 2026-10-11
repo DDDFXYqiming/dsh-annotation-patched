@@ -22,14 +22,14 @@ A locally enhanced, production-grade fork of the official DSH Web text annotatio
 
 ## Interactive Workflow
 
-```
-[Select assistant text] ──> [Click "引用"] ──> [Optional: Type question or leave empty]
-                                                        │
-                                                        ▼
-[Model replies with numbered chips] <── [Send or Ctrl+Enter] <── [Quote badge pinned above composer]
-        │
-        ▼
-[Hover chip to reveal quoted slice]
+```mermaid
+flowchart TD
+    A["Select text slice from assistant turn"] --> B["Floating 'Quote' button appears"]
+    B --> C["Click Quote (type followup comment or leave empty)"]
+    C --> D["Dynamic quote badge pinned above composer"]
+    D --> E["Send normally or queue-jump via Ctrl+Enter"]
+    E --> F["Model replies with numbered quote chips"]
+    F --> G["Hover chip to reveal exact quoted source slice"]
 ```
 
 ---
