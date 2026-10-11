@@ -1,78 +1,74 @@
-[简体中文](README.zh.md) | English
+简体中文 | [English](README.en.md)
 
 # dsh-annotation-patched
 
-A locally enhanced fork of the DSH Web "select-and-quote" plugin, maintained at v0.3.7. The package carries the independent fork name `@dsh-external/dsh-annotation-patched` so its releases never collide with upstream ones.
+**DeepSeek Harness (DSH) Web 划词引用与精准交互强化扩展**。
 
-The plugin does one concrete thing. You select text inside an assistant message in DSH Web, click "**引用**", optionally add a note (or leave it empty), and press Enter. The quote block is composed into your message and sent along with it. The model answers each quote by number, and the replies carry quote chips that expand on hover. Queue-jumping a message with Ctrl+Enter while a conversation is running carries the quotes just the same.
+本仓库是 DSH 官方 Web 划词引用插件的深度强化 Fork 版本（独立包名 `@dsh-external/dsh-annotation-patched`，避免与上游包名冲突）。针对原生插件在长对话与复杂操作中频发的幽灵引用残留、多行输入框错位、思维链标签污染及插队消息失效等痛点，进行了彻底的工程级重构与交互增强。
 
-- Upstream lives at [omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation) (MIT; since upstream v1.4.11 the package name is `@changfenhuang/dsh-annotation`). This fork is based on v1.4.11-preview.1, upstream commit `ab594842` (2026-09-15, upstream note "adopted for DSH 0.1.6-alpha.1"; replay migrated 2026-09-17). Historical base is v1.4.1 plus issue#20, at `fd24ef92`
-- This directory is upstream source plus local enhancements. Every change in `client.js` carries a `PATCH(YYYY-MM-DD)` marker, so `grep` finds them all
-- To move to a new base, run `node scripts/apply-patches.mjs --fetch <upstream-commit> --out client.js` and every fork patch replays in one shot from the `patches/manifest.json` manifest
+---
 
-## Enhancements (local customizations, vs upstream v1.4.11-preview.1)
+## 解决的核心痛点与功能特性
 
-### 1. Empty quote = quote (single-button mode)
+* **单键纯引用模式（Empty Quote Support）**：在助手回复中选中文字后点击“引用”，无需强制输入补充问题即可直接发送纯引用，操作体验完美对齐 Codex 交互逻辑。
+* **根治幽灵引用残留（Ghost-Quote Fix）**：将引用清理时机绑定至精确的“发送成功”与草稿状态流，并引入正则剥离机制，杜绝上一轮未清理引用错误附着到后续普通消息的问题。
+* **多行输入框自适应吸附**：基于 `ResizeObserver` 动态追踪输入框高度与尺寸变化，“引用 ×N”标签始终精准停留在输入框顶部，不再因长文输入而被遮挡或侵入内容区。
+* **思维链标签智能剥离（Think Tag Stripping）**：针对将思维链作为纯文本流式输出的模型服务，自动清洗回复中的 `<think>` / `<thought>` 块，防止模型自言自语中的编号与引文碎片误触发悬浮气泡。
+* **斜杠技能（Slash Skill）无缝联动**：在使用 `/name` 格式呼叫自定义 Skill（如 `/human-writing`）时，选中的引用块自动随消息安全附带递送，不破坏技能指令解析。
+* **Ctrl+Enter 插队消息支持**：在模型正在流式输出时通过 `Ctrl+Enter` 抢占式发送消息，引用块同样完整组装并随插队指令递送，消息气泡自动规整展示。
+* **可维护的补丁重放架构**：每个修改点均带 `PATCH` 锚点注释，并配备 `scripts/apply-patches.mjs` 与自动化补丁重放清单，上游升级时可一键无损迁移。
 
-Select text in an assistant message and click "**引用**". The quote can be saved with nothing typed in it, which gives you a pure quote (it just marks the original text), matching Codex's Add to chat. The toolbar keeps a single "引用" button. Selection is explicit confirmation only. Copy actions and double-click word lookups never turn into a quote by themselves, and the "引用" button has to be clicked, so ghost quotes from stray selections cannot appear.
+---
 
-### 2. Ghost-quote fix (send-confirmed mode)
+## 交互流程示意
 
-Upstream clears the pending-send quote set `quotes` only inside the `decorateAll` decorative-scan poll. That leaves a race window. When a bubble has not rendered yet, a label is missing, or messages go out in quick succession, `quotes` keeps residue around, and later messages you never selected get tagged with old quotes.
-
-`PATCH(2026-08-14c)` made clearing listen to "send confirmed" only. `watchInputDraft` (the draft going from non-empty to empty marks a completed send) is the primary cleanup point, and `decorateAll` (a bubble appearing) stays as the fallback. A new `stripOldBlock()` regex-strips any residual old quote block from the draft before composing, so residue no longer attaches twice and no longer blocks new quote composition. The old guard (return when the draft contains the block) is removed, which closes the path where residue pollution made quotes stick forever.
-
-### 3. Multi-line composer layout fix
-
-The `引用 ×N` label lives in its own `position: fixed` layer and used to be positioned only when the quote count changed. Once the composer grew for multi-line input, the label stayed at its old coordinates and ended up inside the input box. Since `PATCH(2026-08-17)` the label position is kept in sync through `ResizeObserver`, input events, and composer-replace detection, so it sits above the input even on multi-line drafts.
-
-### 4. Inline think-block stripping for legacy model services (v0.2.3)
-
-Legacy model services without a separate reasoning channel write chain-of-thought straight into the text as think / thinking / thought tag blocks. Since `PATCH(2026-09-05)` these blocks are stripped from the assistant row's text nodes once streaming stops (a state machine carries over blocks split across nodes by the markdown renderer), and an `Annotation N:` mentioned inside the monologue no longer turns into a chip.
-
-### 5. Slash skill calls carry quotes too (v0.3.4)
-
-Save a quote from an assistant message, type `/human-writing fix it all`, press Enter and the quote block travels with that message. A skill's `/name` gesture takes free text, so the block is appended after the command. It neither breaks the command token prefix nor gets consumed as a host command argument, because the host (dsh-tool-skill) loads skills by scanning `/name` inside the whole user message on the server side. Built-in commands (`/goal`, `/model` and friends) keep upstream issue #20 behavior, sent as-is without the block, your quotes stay pending for the next message, and a toast says so. The decision reads the host's `remote.skills` catalog (per session, reused for 60 seconds, and when it is unavailable the conservative path above applies).
-
-### 7. Queue-jumping messages carry quotes too (v0.3.6)
-
-Press Ctrl+Enter to queue-jump a message while the conversation is running, and the quote block is composed into it just like any other send. Previously a queue-jumped message with typed text never got the block, so the model only saw your own words. The message is now handed back to the host's own queue-or-steer strategy, while a pure-quote empty draft is still sent directly by the plugin.
-
-### 8. Queue-jumped bubbles heal their display (v0.3.7)
-
-A queue-jumped message enters the message flow only after the current tool call finishes, and the host re-renders the message text once on entry, which brings the freshly hidden quote block back. Now the block is hidden again whenever it is still present in the bubble text, the `引用 ×N` label is added only when missing and never duplicated, and the bubble settles on user text plus the quote label.
-
-### 9. Maintainability
-
-- Every change carries a `PATCH(YYYY-MM-DD[group])` comment marker (from `2026-08-14` onwards; list them with `grep -o "PATCH([^)]*)" client.js | sort -u`), so upstream updates can be diffed and re-applied quickly
-- The patch replay tool (since v0.2.0) is `scripts/apply-patches.mjs` plus `patches/manifest.json`. It takes a clean upstream artifact, applies the global term rename (批注→引用) and the package-name swap, then replays 81 anchored ops one by one (another 4 are retired because upstream v1.4.11 already covers them, recorded under `retired` in the manifest). Each anchor must hit exactly once, and a mismatch aborts with adaptation guidance
-- Debug logs such as `[annotation] 引用块已拼入草稿…`, `[annotation] 斜杠技能 xxx 已随消息追加引用…` and compose logs (with send counts) show up in the DevTools console
-- Running this repository's tests needs Node `>=22.22.2` (required by the jsdom 30 devDependency); `engines: >=20` in `package.json` only describes the DSH host runtime and does not mean the jsdom suite runs on Node 20
-- The version and op counts stated in the README are checked against `package.json` / `patches/manifest.json` by a documentation-consistency assertion in `npm test`, so they cannot drift again
-
-## Install
-
-```bash
-# From GitHub (recommended)
-dsh plugin --profile web add github:DDDFXYqiming/dsh-annotation-patched
-# Or from a local dev checkout
-dsh plugin --profile web add <repo dir>
+```
+[选中助手回复某段文字] ──> [浮现"引用"按钮] ──> [点击引用 (可输入补充文字或留空)]
+                                                           │
+                                                           ▼
+[模型回复携带引用编号] <── [回车或 Ctrl+Enter 插队发送] <── [输入框上方呈现"引用 ×N"标签]
+         │
+         ▼
+[悬浮展开原文对应切片]
 ```
 
-## Known limits
+---
 
-- Only **assistant** messages can be selected (user-typed messages are ignored)
-- Auto-quote fires on **Enter-to-send**, **Ctrl+Enter queue-jump**, and clicking the send button. Since v0.3.0 the button path is handled by upstream v1.4.11's `onSendPointerDown`/`onSendKeyboardClick` (the fork's own patch for it is retired), and all three paths compose the quote into the draft before submitting
-- This is a browser-side plugin. Changes to `client.js` need a **Ctrl+F5 hard reload** (or a different browser) to take effect. `pnpm` updates overwrite the copy in `node_modules`, so relink from this directory to re-pin
-- The plugin is tightly coupled to the DSH Web DOM structure (`[data-time-hover-root]`, `[class*="bubble"]`, `[data-composer-card]`, etc.). DSH UI upgrades may break it
-- Carrying quotes on a slash skill call depends on the host's `remote.skills` service (the same source the official skill plugin uses; it is not injected, it is queried optionally with `ctx.get`). When that namespace is not mounted, the catalog has not arrived yet, or the call fails, that one message keeps upstream's conservative behavior (no block, quotes stay pending for the next message)
-- Since v0.3.4 the package's loader entry id is `dsh-annotation-patched`, distinct from upstream's `dsh-annotation`, so installing both no longer produces a duplicate loader entry. If you wrote a profile-layer override against the old id, rename it together with this upgrade
+## 安装与快速上手
 
-## Upgrade log
+### 通过 DSH 插件系统安装（推荐）
 
-- v0.3.0 moved the base from v1.4.1 (fd24ef92) to v1.4.11-preview.1 (ab594842) to adopt DSH 0.1.6's Lexical composer. 11 anchors adapted (package ids, attachAndSend, chip positioning, message-flow observer, Enter guard, dispose) and 4 retired (send-button compose and its dispose cleanup, focusComposer, session-switch pendingDeco clear), all already covered by upstream. Replay is 34/34 with no mismatch and byte-identical, and 7/7 tests pass
-- v0.2.0 moved the base from v1.3.13 to v1.4.1 (plus issue#20) with 5 anchor adaptations. ① The toolbar text is i18n-aware now, it goes through `t()`, and the 可留空 hint moved into the zh/en dictionaries. ② `attachAndSend(e)` changed signature, the click path passes a synthetic event object. ③ `stripOldBlock` got bilingual sentinels, zh uses `提问：` and en uses `Ask:`. ④ The `updateChip` anchor follows `t(chip.count)`. ⑤ The export tail became a single-line anchor. Test assertions followed the inject and locale changes.
+```bash
+dsh plugin --profile web add github:DDDFXYqiming/dsh-annotation-patched
+```
 
-## License
+### 本地开发与引入
 
-MIT (upstream copyright preserved, see LICENSE)
+```bash
+git clone https://github.com/DDDFXYqiming/dsh-annotation-patched.git
+cd dsh-annotation-patched
+npm install && npm run build
+dsh plugin --profile web add .
+```
+
+*注意：本插件作用于浏览器前端，安装或更新后建议在 DSH Web 界面按 `Ctrl+F5` 进行强制刷新以确保加载最新静态资源。*
+
+---
+
+## 补丁维护机制
+
+若上游发布了新的基础版本，可通过内置的重放脚本执行平滑迁移：
+
+```bash
+# 获取上游 commit 并自动重放本地全部增强补丁
+node scripts/apply-patches.mjs --fetch <upstream-commit> --out client.js
+npm test
+```
+
+重放工具将自动完成术语一致性校验、81 处锚点精确打补丁以及前端兼容性测试。
+
+---
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源（保留上游版权信息）。
