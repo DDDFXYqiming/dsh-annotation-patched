@@ -2,7 +2,7 @@
 
 # dsh-annotation-patched
 
-**DeepSeek Harness (DSH) Web 划词引用与精准交互强化扩展**。
+**DeepSeek Harness (DSH) Web 划词引用与精准交互强化扩展**（fork 维护，v0.3.7）。
 
 本仓库是 DSH 官方 Web 划词引用插件的深度强化 Fork 版本（独立包名 `@dsh-external/dsh-annotation-patched`，避免与上游包名冲突）。针对原生插件在长对话与复杂操作中频发的幽灵引用残留、多行输入框错位、思维链标签污染及插队消息失效等痛点，进行了彻底的工程级重构与交互增强。
 
@@ -65,7 +65,7 @@ node scripts/apply-patches.mjs --fetch <upstream-commit> --out client.js
 npm test
 ```
 
-重放工具将自动完成术语一致性校验、81 处锚点精确打补丁以及前端兼容性测试。
+重放工具将自动完成术语一致性校验、81 条锚定 op 精确打补丁以及前端兼容性测试。
 
 ---
 
