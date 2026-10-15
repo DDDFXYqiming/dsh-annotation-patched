@@ -12,9 +12,6 @@
 //      keyCode 229 + compositionend 后短延迟 latch）→ 引用块 prepend 进草稿
 //      （setDraft，不覆盖用户文字）→ composer 正常提交；Cmd/Ctrl+Enter（含运行中
 //      插队）同样拼稿，仅「纯引用空草稿」由插件接管直发
-//   5. 用户气泡不显示引用块：MutationObserver 微任务阶段（绘制前）按最后一个
-//      「提问：」切掉引用块、贴「引用 ×N」标签（hover 可见）；1s 轮询兜底 +
-//      历史消息自动修复（用户气泡是 MessageText 单文本节点，非 markdown）
 //   6. 回复逐条对照：引用块末尾注入格式指令，模型按「Annotation N：…」逐条
 //      回应；回复渲染完成（data-streaming 移除）后把「Annotation N：」替换为
 //      可悬浮芯片（数据取最近一条带标签用户消息的 tag.__annotationItems，刷新
@@ -29,17 +26,7 @@
 //   zh 分隔标记用「提问：」而非「问题：」——标题行「回答我的问题：」里也含
 //   它，气泡隐藏手术会误命中）
 //
-// 发送清空只认 watchInputDraft 的「草稿有→空」迁移（未就绪时订阅重试补齐）；
-// 气泡装饰走 MutationObserver + 轮询，只负责隐藏/贴标签，绝不清空待发送引用
-// （历史消息重装饰与刚发送在 DOM 上不可区分，见 decorateAll）。
 //
-// 判别式与 omdsh-dev/navbar 一致：助手行 = [data-time-hover-root] 且不含
-// user bubble（[class*="bubble"]）。
-// focus-chat（@dingyi222666/dsh-focus-chat）兼容：其会话视图挂载在
-// [data-focus-flow] 内，助手行 = class 含 "assistant" 的容器（CSS Modules
-// 哈希名形如 `<hash>_assistant`，流式期间行自带 data-streaming），用户行
-// 沿用 data-time-hover-root；切换视图 tab 时主视图会卸载，故行判别必须
-// 同时覆盖两种视图结构（见 assistantRows / allMessageRows / assistantRowOf）。
 window.__ModuleLoader__.load({
   // 必须与 package.json "name" 完全一致，否则 client-modules 报：
   // bundle loaded without registering "@dsh-external/dsh-annotation-patched"
@@ -1225,15 +1212,9 @@ window.__ModuleLoader__.load({
       var observer = new MutationObserver(function (mutations) {
         if (!mutationRelevant(mutations)) return
         onLayoutChange()
-        // 消息行插入/内容填充的瞬间同步执行气泡装饰（隐藏引用块 + 贴标签）：
         // 只有「消息行插入」批次才同步执行气泡装饰（隐藏引用块 + 贴标签）：
         // MutationObserver 回调在微任务阶段运行，早于浏览器绘制，
         // 用户看不到「先显示引用块再隐藏」的闪烁。
-        // 流式输出期的主体 mutation 是 attributes/characterData（每个 token 帧一层
-        // class/style/文本变更，实测 20s 内 245 批次 0 个 childList）：行插入本来
-        // 就携带完整引用块，逐一触发全文档扫描（decorateAll 是 querySelectorAll +
-        // 每行子树查询 + textContent，成本随会话长度线性增长）会在长会话上白白
-        // 烧主线程；漏网场景由下方 1s 兜底轮询覆盖。
         var hasRowInsert = false
         for (var i = 0; i < mutations.length; i++) {
           if (mutations[i].type === 'childList') { hasRowInsert = true; break }
