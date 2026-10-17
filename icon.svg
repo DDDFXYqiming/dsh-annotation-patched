@@ -1,0 +1,17 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="6" y="6" width="24" height="20" rx="6" fill="url(#annotation-bubble)" stroke="#658EFF" stroke-width="2.5"/>
+  <path d="M13 26V31.5L19.5 26" stroke="#658EFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M11.5 12.5H24.5" stroke="url(#annotation-lines)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M11.5 17.5H19" stroke="url(#annotation-lines)" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="24.5" cy="17.5" r="2.25" fill="#41E1AC"/>
+  <defs>
+    <linearGradient id="annotation-bubble" x1="8" y1="7" x2="28" y2="26" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4561EE" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#41E1AC" stop-opacity="0.08"/>
+    </linearGradient>
+    <linearGradient id="annotation-lines" x1="11.5" y1="15" x2="25" y2="15" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#41E1AC"/>
+      <stop offset="1" stop-color="#658EFF"/>
+    </linearGradient>
+  </defs>
+</svg>

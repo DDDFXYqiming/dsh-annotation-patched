@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Selection annotation",
+    "description": "Select text in an assistant reply and send it as a numbered annotation. The model answers each annotation by number."
+  }
+}
